@@ -35,5 +35,16 @@ https://flowday-student-planner.vercel.app
 - Tailwind CSS
 - Vercel
 
-## 📂 Project Structure
+## 📁 Project Structure
+
+```text
+flowday-student-planner/
+├── src/
+├── index.html
+├── package.json
+├── package-lock.json
+├── vite.config.ts
+├── tsconfig.json
+└── README.md
+
 
