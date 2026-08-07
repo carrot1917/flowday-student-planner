@@ -1,0 +1,130 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Plus Jakarta Sans', ui-sans-serif, system-ui, sans-serif;
+
+  /* Brand — soft, bright sky blue */
+  --color-brand-50: #eef7ff;
+  --color-brand-100: #d9edff;
+  --color-brand-200: #bce0ff;
+  --color-brand-300: #8ecdff;
+  --color-brand-400: #5ab0ff;
+  --color-brand-500: #3494fb;
+  --color-brand-600: #1d77e8;
+  --color-brand-700: #175fc4;
+  --color-brand-800: #184e9c;
+  --color-brand-900: #1a437d;
+
+  --color-sand-50: #fbfaf7;
+  --color-sand-100: #f6f3ec;
+
+  --color-ink-900: #1f2733;
+  --color-ink-700: #3c4757;
+  --color-ink-500: #6b7689;
+  --color-ink-400: #94a0b3;
+
+  --color-high: #ff7a8a;
+  --color-med: #ffc56b;
+  --color-low: #7ed3a8;
+}
+
+@font-face {
+  font-family: 'Plus Jakarta Sans';
+  font-style: normal;
+  font-weight: 200 800;
+  font-display: swap;
+  src: local('Plus Jakarta Sans');
+}
+
+html {
+  font-family: var(--font-sans);
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+body {
+  background: linear-gradient(135deg, #eef7ff 0%, #ffffff 50%, #d9edff 100%);
+  background-attachment: fixed;
+  color: var(--color-ink-900);
+}
+
+/* Thin custom scrollbars */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: var(--color-brand-200) transparent;
+}
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: var(--color-brand-200);
+  border-radius: 9999px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: var(--color-brand-300);
+}
+
+/* ---------- Animations ---------- */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes popIn {
+  0% { opacity: 0; transform: scale(0.96) translateY(8px); }
+  100% { opacity: 1; transform: scale(1) translateY(0); }
+}
+@keyframes slideInRight {
+  from { opacity: 0; transform: translateX(24px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes checkPop {
+  0% { transform: scale(1); }
+  40% { transform: scale(1.25); }
+  100% { transform: scale(1); }
+}
+@keyframes confettiFall {
+  0% { opacity: 1; transform: translateY(0) rotate(0deg); }
+  100% { opacity: 0; transform: translateY(60px) rotate(180deg); }
+}
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+.animate-fade-in { animation: fadeIn 0.35s ease both; }
+.animate-pop-in { animation: popIn 0.28s cubic-bezier(0.22, 1, 0.36, 1) both; }
+.animate-slide-in-right { animation: slideInRight 0.3s ease both; }
+.animate-check-pop { animation: checkPop 0.4s ease; }
+
+/* Stagger helper */
+.stagger > * { animation: fadeIn 0.35s ease both; }
+.stagger > *:nth-child(1) { animation-delay: 0.02s; }
+.stagger > *:nth-child(2) { animation-delay: 0.06s; }
+.stagger > *:nth-child(3) { animation-delay: 0.1s; }
+.stagger > *:nth-child(4) { animation-delay: 0.14s; }
+.stagger > *:nth-child(5) { animation-delay: 0.18s; }
+.stagger > *:nth-child(6) { animation-delay: 0.22s; }
+.stagger > *:nth-child(7) { animation-delay: 0.26s; }
+.stagger > *:nth-child(8) { animation-delay: 0.3s; }
+
+/* Drag states */
+.dragging {
+  opacity: 0.4;
+  transform: rotate(2deg);
+}
+.drop-target {
+  outline: 2px dashed var(--color-brand-400);
+  outline-offset: -4px;
+  background: var(--color-brand-50);
+}
+
+/* Shimmer for AI loading */
+.shimmer {
+  background: linear-gradient(90deg, #eef3f8 25%, #f7fafd 37%, #eef3f8 63%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s ease infinite;
+}
+
+/* Checkbox tick */
+.tick-anim { animation: checkPop 0.4s ease; }
