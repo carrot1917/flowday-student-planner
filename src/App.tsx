@@ -6,6 +6,8 @@ import { Dashboard } from '@/pages/Dashboard';
 import { TasksPage } from '@/pages/TasksPage';
 import { KanbanPage } from '@/pages/KanbanPage';
 import { TimelinePage } from '@/pages/TimelinePage';
+import { CalendarPage } from '@/pages/CalendarPage';
+import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { AIPage } from '@/pages/AIPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { FlowProvider, useFlow } from '@/store';
@@ -47,6 +49,8 @@ function Shell() {
           {page === 'tasks' && <TasksPage onOpenTask={openEdit} />}
           {page === 'kanban' && <KanbanPage onOpenTask={openEdit} />}
           {page === 'timeline' && <TimelinePage onOpenTask={openEdit} onAddTaskOnDate={(d) => openAdd(d)} />}
+          {page === 'calendar' && <CalendarPage onOpenTask={openEdit} onAddTaskOnDate={(d) => openAdd(d)} />}
+          {page === 'availability' && <AvailabilityPage />}
           {page === 'ai' && <AIPage onApplySubtasks={applySubtasks} />}
           {page === 'settings' && <SettingsPage />}
         </main>

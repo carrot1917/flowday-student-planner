@@ -2,29 +2,36 @@ import { useMemo, useState } from 'react';
 import { Search, ListTodo, ArrowUpDown, Filter } from 'lucide-react';
 import { useFlow } from '@/store';
 import { relativeDue } from '@/lib/date';
-import type { Priority, Status, Tag, Task } from '@/types';
-import { PRIORITY_LABELS, STATUS_LABELS, TAG_LABELS } from '@/types';
-import { Checkbox, EmptyState, PriorityBadge, PriorityDot, StatusBadge, TagBadge } from '@/components/ui';
+import { formatEstimate } from '@/lib/domain';
+import type { Priority, Status, Task } from '@/types';
+import { PRIORITY_LABELS, STATUS_LABELS, UNCATEGORIZED_LABEL } from '@/types';
+import { Checkbox, CourseBadge, EmptyState, PriorityBadge, PriorityDot, StatusBadge } from '@/components/ui';
 
 interface TasksPageProps {
   onOpenTask: (t: Task) => void;
 }
 
 type SortKey = 'due' | 'priority' | 'created';
+// 'none' = tasks with no course, or whose course was deleted (dangling id).
+type CourseFilter = 'all' | 'none' | string;
 
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 export function TasksPage({ onOpenTask }: TasksPageProps) {
-  const { tasks, toggleDone } = useFlow();
+  const { tasks, courses, courseById, toggleDone } = useFlow();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
-  const [tagFilter, setTagFilter] = useState<Tag | 'all'>('all');
+  const [courseFilter, setCourseFilter] = useState<CourseFilter>('all');
   const [sort, setSort] = useState<SortKey>('due');
 
   const filtered = useMemo(() => {
     let list = tasks.filter((t) => {
       if (statusFilter !== 'all' && t.status !== statusFilter) return false;
-      if (tagFilter !== 'all' && t.tag !== tagFilter) return false;
+      if (courseFilter === 'none') {
+        if (t.courseId && courseById.has(t.courseId)) return false;
+      } else if (courseFilter !== 'all') {
+        if (t.courseId !== courseFilter) return false;
+      }
       if (query) {
         const q = query.toLowerCase();
         if (!t.title.toLowerCase().includes(q) && !t.description.toLowerCase().includes(q)) return false;
@@ -37,7 +44,7 @@ export function TasksPage({ onOpenTask }: TasksPageProps) {
       return b.createdAt - a.createdAt;
     });
     return list;
-  }, [tasks, query, statusFilter, tagFilter, sort]);
+  }, [tasks, query, statusFilter, courseFilter, courseById, sort]);
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -78,13 +85,16 @@ export function TasksPage({ onOpenTask }: TasksPageProps) {
           </FilterChip>
         ))}
         <span className="mx-1 h-4 w-px bg-brand-100" />
-        <span className="text-xs font-semibold text-ink-400">标签</span>
-        <FilterChip active={tagFilter === 'all'} onClick={() => setTagFilter('all')}>全部</FilterChip>
-        {(['math', 'english', 'coding', 'reading', 'other'] as Tag[]).map((t) => (
-          <FilterChip key={t} active={tagFilter === t} onClick={() => setTagFilter(t)}>
-            {TAG_LABELS[t]}
+        <span className="text-xs font-semibold text-ink-400">课程</span>
+        <FilterChip active={courseFilter === 'all'} onClick={() => setCourseFilter('all')}>全部</FilterChip>
+        {courses.map((c) => (
+          <FilterChip key={c.id} active={courseFilter === c.id} onClick={() => setCourseFilter(c.id)}>
+            {c.name}
           </FilterChip>
         ))}
+        <FilterChip active={courseFilter === 'none'} onClick={() => setCourseFilter('none')}>
+          {UNCATEGORIZED_LABEL}
+        </FilterChip>
       </div>
 
       {/* List */}
@@ -110,9 +120,11 @@ export function TasksPage({ onOpenTask }: TasksPageProps) {
                     </div>
                     {t.description && <p className="mt-0.5 truncate text-xs text-ink-400">{t.description}</p>}
                     <div className="mt-1.5 flex flex-wrap items-center gap-1.5">
-                      <TagBadge tag={t.tag} />
+                      <CourseBadge course={t.courseId ? courseById.get(t.courseId) : undefined} />
                       <StatusBadge status={t.status} />
-                      {t.startTime && <span className="text-[11px] text-ink-400">{t.startTime}{t.endTime && `-${t.endTime}`}</span>}
+                      {t.estimatedMinutes ? (
+                        <span className="text-[11px] text-ink-400">预计 {formatEstimate(t.estimatedMinutes)}</span>
+                      ) : null}
                       {t.subtasks.length > 0 && (
                         <span className="text-[11px] text-ink-400">
                           子任务 {t.subtasks.filter((s) => s.done).length}/{t.subtasks.length}

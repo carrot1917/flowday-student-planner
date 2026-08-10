@@ -1,9 +1,16 @@
-import { useEffect, useState } from 'react';
-import { X, Trash2, Plus, Sparkles } from 'lucide-react';
-import type { Priority, Tag, Task } from '@/types';
-import { PRIORITY_LABELS, TAG_LABELS } from '@/types';
+import { useEffect, useMemo, useState } from 'react';
+import { X, Trash2, Plus, Sparkles, Clock3, CircleAlert } from 'lucide-react';
+import type { Priority, Task } from '@/types';
+import { PRIORITY_LABELS, UNCATEGORIZED_COLOR, UNCATEGORIZED_LABEL } from '@/types';
 import { useFlow } from '@/store';
+import {
+  ESTIMATED_MINUTES_PRESETS,
+  findCourse,
+  legacyTagForCourseName,
+  parseEstimatedMinutes,
+} from '@/lib/domain';
 import { aiDecomposeSubtasks } from '@/lib/ai';
+import { createTask } from '@/lib/storage';
 import { todayISO } from '@/lib/date';
 import { Checkbox } from './ui';
 
@@ -14,28 +21,23 @@ interface TaskModalProps {
 }
 
 const PRIORITIES: Priority[] = ['high', 'medium', 'low'];
-const TAGS: Tag[] = ['math', 'english', 'coding', 'reading', 'other'];
 
 export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
-  const { addTask, updateTask, deleteTask } = useFlow();
+  const { addTask, updateTask, deleteTask, courses } = useFlow();
   const isEdit = !!task;
 
   const [draft, setDraft] = useState<Task>(() =>
-    task ?? {
-      id: '',
-      title: '',
-      description: '',
-      dueDate: defaultDate ?? todayISO(),
-      startTime: '',
-      endTime: '',
-      priority: 'medium',
-      tag: 'other',
-      status: 'todo',
-      createdAt: 0,
-      completedAt: null,
-      subtasks: [],
-    },
+    task ?? createTask({ dueDate: defaultDate ?? todayISO() }),
   );
+  // The estimate is edited as raw text so an in-progress value never reaches state.
+  const [estimateRaw, setEstimateRaw] = useState<string>(() =>
+    task?.estimatedMinutes ? String(task.estimatedMinutes) : '',
+  );
+
+  const estimate = useMemo(() => parseEstimatedMinutes(estimateRaw), [estimateRaw]);
+  const selectedCourse = findCourse(courses, draft.courseId);
+  // A task can point at a course that was deleted — show it as 未分类 rather than crashing.
+  const danglingCourse = !!draft.courseId && !selectedCourse;
 
   useEffect(() => {
     const onKey = (e: KeyboardEvent) => e.key === 'Escape' && onClose();
@@ -45,13 +47,23 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
 
   const set = (patch: Partial<Task>) => setDraft((d) => ({ ...d, ...patch }));
 
+  const canSave = !!draft.title.trim() && estimate.ok;
+
   const handleSave = () => {
-    if (!draft.title.trim()) return;
-    if (isEdit) {
-      updateTask(task!.id, draft);
-    } else {
-      addTask(draft);
-    }
+    if (!canSave || !estimate.ok) return;
+    const course = findCourse(courses, draft.courseId);
+    const payload: Task = {
+      ...draft,
+      title: draft.title.trim(),
+      // Dangling ids are cleaned up on save so the task settles as 未分类.
+      courseId: course?.id,
+      estimatedMinutes: estimate.value,
+      // Legacy compat only: keep the old tag meaningful when the course maps onto
+      // one of the five original categories, otherwise leave whatever was there.
+      tag: course ? legacyTagForCourseName(course.name) : draft.tag,
+    };
+    if (isEdit) updateTask(task!.id, payload);
+    else addTask(payload);
     onClose();
   };
 
@@ -100,6 +112,32 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
             />
           </Field>
 
+          <Field label="课程">
+            <div className="flex flex-wrap gap-1.5">
+              <CourseChip
+                label={UNCATEGORIZED_LABEL}
+                color={UNCATEGORIZED_COLOR}
+                active={!selectedCourse}
+                onClick={() => set({ courseId: undefined })}
+              />
+              {courses.map((c) => (
+                <CourseChip
+                  key={c.id}
+                  label={c.name}
+                  color={c.color}
+                  active={selectedCourse?.id === c.id}
+                  onClick={() => set({ courseId: c.id })}
+                />
+              ))}
+            </div>
+            {courses.length === 0 && (
+              <p className="mt-1.5 text-[11px] text-ink-400">还没有课程 — 可在「设置 → 课程管理」中添加。</p>
+            )}
+            {danglingCourse && (
+              <p className="mt-1.5 text-[11px] text-amber-600">原课程已被删除，保存后该任务将标记为{UNCATEGORIZED_LABEL}。</p>
+            )}
+          </Field>
+
           <div className="grid grid-cols-2 gap-3">
             <Field label="截止日期">
               <input
@@ -132,41 +170,41 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
             </Field>
           </div>
 
-          <div className="grid grid-cols-2 gap-3">
-            <Field label="开始时间 (可选)">
-              <input
-                type="time"
-                value={draft.startTime}
-                onChange={(e) => set({ startTime: e.target.value })}
-                className="w-full rounded-xl border border-brand-100 bg-sand-50 px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-200"
-              />
-            </Field>
-            <Field label="结束时间 (可选)">
-              <input
-                type="time"
-                value={draft.endTime}
-                onChange={(e) => set({ endTime: e.target.value })}
-                className="w-full rounded-xl border border-brand-100 bg-sand-50 px-3.5 py-2.5 text-sm outline-none transition focus:border-brand-400 focus:bg-white focus:ring-2 focus:ring-brand-200"
-              />
-            </Field>
-          </div>
-
-          <Field label="标签">
-            <div className="flex flex-wrap gap-1.5">
-              {TAGS.map((t) => (
+          <Field label="预计学习时长 (可选)">
+            <div className="flex flex-wrap items-center gap-1.5">
+              {ESTIMATED_MINUTES_PRESETS.map((m) => (
                 <button
-                  key={t}
-                  onClick={() => set({ tag: t })}
-                  className={`rounded-full px-3 py-1.5 text-xs font-medium transition ${
-                    draft.tag === t
+                  key={m}
+                  onClick={() => setEstimateRaw(estimateRaw === String(m) ? '' : String(m))}
+                  className={`rounded-xl px-3 py-2 text-xs font-medium transition ${
+                    estimateRaw === String(m)
                       ? 'bg-brand-500 text-white'
                       : 'bg-sand-50 text-ink-500 hover:bg-brand-50'
                   }`}
                 >
-                  {TAG_LABELS[t]}
+                  {m} 分钟
                 </button>
               ))}
+              <div className="relative ml-auto w-28">
+                <Clock3 className="pointer-events-none absolute left-2.5 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-ink-400" />
+                <input
+                  inputMode="numeric"
+                  value={estimateRaw}
+                  onChange={(e) => setEstimateRaw(e.target.value)}
+                  placeholder="分钟"
+                  className={`w-full rounded-xl border bg-sand-50 py-2.5 pl-8 pr-2.5 text-sm outline-none transition focus:bg-white focus:ring-2 ${
+                    estimate.ok
+                      ? 'border-brand-100 focus:border-brand-400 focus:ring-brand-200'
+                      : 'border-rose-300 focus:border-rose-400 focus:ring-rose-200'
+                  }`}
+                />
+              </div>
             </div>
+            {!estimate.ok && (
+              <p className="mt-1.5 flex items-center gap-1 text-[11px] text-rose-500">
+                <CircleAlert className="h-3 w-3" /> {estimate.message}
+              </p>
+            )}
           </Field>
 
           <Field label="子任务">
@@ -223,7 +261,7 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
             </button>
             <button
               onClick={handleSave}
-              disabled={!draft.title.trim()}
+              disabled={!canSave}
               className="rounded-xl bg-gradient-to-r from-brand-500 to-brand-400 px-5 py-2 text-sm font-semibold text-white shadow-md shadow-brand-300/40 transition hover:shadow-lg disabled:opacity-40"
             >
               {isEdit ? '保存' : '创建'}
@@ -232,6 +270,36 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
         </div>
       </div>
     </div>
+  );
+}
+
+function CourseChip({
+  label,
+  color,
+  active,
+  onClick,
+}: {
+  label: string;
+  color: string;
+  active: boolean;
+  onClick: () => void;
+}) {
+  return (
+    <button
+      onClick={onClick}
+      className="flex items-center gap-1.5 rounded-full px-3 py-1.5 text-xs font-medium transition"
+      style={
+        active
+          ? { backgroundColor: color, color: '#fff' }
+          : { backgroundColor: `${color}14`, color, boxShadow: `inset 0 0 0 1px ${color}33` }
+      }
+    >
+      <span
+        className="h-1.5 w-1.5 rounded-full"
+        style={{ backgroundColor: active ? '#fff' : color }}
+      />
+      {label}
+    </button>
   );
 }
 

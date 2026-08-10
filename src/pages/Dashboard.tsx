@@ -1,15 +1,23 @@
-import { CheckCircle2, Plus, Sparkles, TrendingUp } from 'lucide-react';
+import { AlertTriangle, CalendarClock, CheckCircle2, Clock, Plus, Sparkles, TrendingUp } from 'lucide-react';
 import { useMemo } from 'react';
 import { useFlow } from '@/store';
+import { formatEstimate } from '@/lib/domain';
 import { todayISO, formatLong, relativeDue } from '@/lib/date';
 import { aiSummary } from '@/lib/ai';
-import { Checkbox, PriorityDot, TagBadge, EmptyState } from '@/components/ui';
-import type { Task } from '@/types';
+import {
+  findTaskForBlock,
+  groupBlocksByDate,
+  overdueTasks,
+  sumPlannedMinutes,
+  todayDueTasks,
+} from '@/lib/schedule';
+import { Checkbox, CourseBadge, PriorityDot, StatusBadge, EmptyState } from '@/components/ui';
+import type { ScheduleBlock, Task } from '@/types';
 
 interface DashboardProps {
   onOpenTask: (t: Task) => void;
   onAddTask: () => void;
-  onNavigate: (p: 'tasks' | 'ai') => void;
+  onNavigate: (p: 'tasks' | 'ai' | 'calendar' | 'timeline') => void;
 }
 
 const ENCOURAGEMENTS = [
@@ -21,12 +29,27 @@ const ENCOURAGEMENTS = [
 ];
 
 export function Dashboard({ onOpenTask, onAddTask, onNavigate }: DashboardProps) {
-  const { tasks, toggleDone } = useFlow();
+  const { tasks, courseById, scheduleBlocks, taskById, toggleDone } = useFlow();
   const today = todayISO();
-  const todayTasks = useMemo(() => tasks.filter((t) => t.dueDate === today), [tasks, today]);
-  const done = todayTasks.filter((t) => t.status === 'done').length;
-  const pending = todayTasks.length - done;
-  const progress = todayTasks.length ? Math.round((done / todayTasks.length) * 100) : 0;
+
+  const { todayStudy, todayDue, overdue, plannedMin, done, progress } = useMemo(() => {
+    const blocks = groupBlocksByDate(scheduleBlocks)[today] ?? [];
+    const study = blocks
+      .map((b) => ({ block: b, task: findTaskForBlock(taskById, b) }))
+      .filter((x): x is { block: ScheduleBlock; task: Task } => Boolean(x.task));
+    const due = todayDueTasks(tasks, today);
+    const over = overdueTasks(tasks, today);
+    const doneCount = due.filter((t) => t.status === 'done').length;
+    return {
+      todayStudy: study,
+      todayDue: due,
+      overdue: over,
+      plannedMin: sumPlannedMinutes(blocks),
+      done: doneCount,
+      progress: due.length ? Math.round((doneCount / due.length) * 100) : 0,
+    };
+  }, [tasks, scheduleBlocks, taskById, today]);
+
   const summary = useMemo(() => aiSummary(tasks), [tasks]);
   const encouragement = ENCOURAGEMENTS[new Date().getDate() % ENCOURAGEMENTS.length];
 
@@ -57,7 +80,7 @@ export function Dashboard({ onOpenTask, onAddTask, onNavigate }: DashboardProps)
             </div>
           </div>
 
-          {/* Progress ring */}
+          {/* Progress ring — today's deadline completion rate */}
           <div className="flex items-center gap-4 rounded-2xl bg-white/15 px-5 py-4 backdrop-blur-sm">
             <ProgressRing percent={progress} />
             <div className="space-y-1">
@@ -66,12 +89,12 @@ export function Dashboard({ onOpenTask, onAddTask, onNavigate }: DashboardProps)
                 <span className="text-white/70">已完成</span>
               </div>
               <div className="flex items-center gap-1.5 text-sm">
-                <span className="font-bold">{pending}</span>
+                <span className="font-bold">{todayDue.length - done}</span>
                 <span className="text-white/70">待完成</span>
               </div>
               <div className="flex items-center gap-1.5 text-sm">
-                <span className="font-bold">{todayTasks.length}</span>
-                <span className="text-white/70">今日总数</span>
+                <span className="font-bold">{todayDue.length}</span>
+                <span className="text-white/70">今日截止</span>
               </div>
             </div>
           </div>
@@ -86,39 +109,164 @@ export function Dashboard({ onOpenTask, onAddTask, onNavigate }: DashboardProps)
         <p className="pt-1 text-sm leading-relaxed text-ink-600">{summary.text}</p>
       </div>
 
-      {/* Today's tasks */}
-      <div className="rounded-[24px] border border-brand-100 bg-white/80 p-5 backdrop-blur-sm">
-        <div className="mb-4 flex items-center justify-between">
-          <p className="text-sm font-bold text-ink-900">今日任务</p>
-          <button onClick={() => onNavigate('tasks')} className="text-xs font-medium text-brand-500 hover:text-brand-600">
-            查看全部 →
-          </button>
-        </div>
-        {todayTasks.length === 0 ? (
-          <EmptyState icon={CheckCircle2} title="今天还没有任务" hint="点击「添加任务」开始规划你的一天" />
+      {/* Quick stats */}
+      <div className="grid grid-cols-3 gap-3">
+        <StatCard icon={Clock} label="今日计划" value={`${plannedMin} 分钟`} />
+        <StatCard icon={CalendarClock} label="今日截止" value={`${todayDue.length} 项`} />
+        <StatCard icon={AlertTriangle} label="逾期" value={`${overdue.length} 项`} danger={overdue.length > 0} />
+      </div>
+
+      {/* 今日学习 — from ScheduleBlock */}
+      <SectionCard
+        title="今日学习"
+        onViewAll={todayStudy.length ? () => onNavigate('calendar') : undefined}
+        viewAllLabel="查看日历"
+      >
+        {todayStudy.length === 0 ? (
+          <EmptyState icon={CalendarClock} title="今天还没有学习安排" hint="用智能排期规划你的学习时间" />
         ) : (
           <div className="stagger space-y-2">
-            {todayTasks.map((t) => (
-              <div
-                key={t.id}
-                className="flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-3 transition hover:border-brand-100 hover:bg-brand-50/50"
-              >
-                <Checkbox checked={t.status === 'done'} onChange={() => toggleDone(t.id)} />
-                <button onClick={() => onOpenTask(t)} className="min-w-0 flex-1 text-left">
-                  <p className={`truncate text-sm font-medium ${t.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-900'}`}>
-                    {t.title}
-                  </p>
-                  <div className="mt-0.5 flex items-center gap-2">
-                    <PriorityDot priority={t.priority} />
-                    {t.startTime && <span className="text-[11px] text-ink-400">{t.startTime}</span>}
-                    <TagBadge tag={t.tag} />
+            {todayStudy.map(({ block, task }) => {
+              const course = task.courseId ? courseById.get(task.courseId) : undefined;
+              return (
+                <button
+                  key={block.id}
+                  onClick={() => onOpenTask(task)}
+                  className="flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-3 text-left transition hover:border-brand-100 hover:bg-brand-50/50"
+                >
+                  <span className="flex-shrink-0 text-xs font-medium tabular-nums text-ink-400">
+                    {block.startTime}–{block.endTime}
+                  </span>
+                  <div className="min-w-0 flex-1">
+                    <p className="truncate text-sm font-medium text-ink-900">{task.title}</p>
+                    <div className="mt-0.5 flex items-center gap-2">
+                      <CourseBadge course={course} />
+                      <span className="text-[11px] text-ink-400">{block.plannedMinutes} 分钟</span>
+                    </div>
                   </div>
                 </button>
-              </div>
+              );
+            })}
+          </div>
+        )}
+      </SectionCard>
+
+      {/* 今日截止 — deadline === today */}
+      <SectionCard
+        title="今日截止"
+        onViewAll={todayDue.length ? () => onNavigate('tasks') : undefined}
+        viewAllLabel="查看全部"
+      >
+        {todayDue.length === 0 ? (
+          <EmptyState icon={CheckCircle2} title="今天没有截止任务" hint="好好享受没有 deadline 的一天" />
+        ) : (
+          <div className="stagger space-y-2">
+            {todayDue.map((t) => (
+              <DeadlineRow key={t.id} task={t} onOpenTask={onOpenTask} toggleDone={toggleDone} courseById={courseById} />
             ))}
           </div>
         )}
+      </SectionCard>
+
+      {/* 逾期 — not done and past deadline */}
+      <SectionCard
+        title="逾期"
+        onViewAll={overdue.length ? () => onNavigate('timeline') : undefined}
+        viewAllLabel="查看时间线"
+      >
+        {overdue.length === 0 ? (
+          <EmptyState icon={AlertTriangle} title="没有逾期任务" hint="保持住这个好状态" />
+        ) : (
+          <div className="stagger space-y-2">
+            {overdue.map((t) => (
+              <DeadlineRow key={t.id} task={t} onOpenTask={onOpenTask} toggleDone={toggleDone} courseById={courseById} />
+            ))}
+          </div>
+        )}
+      </SectionCard>
+    </div>
+  );
+}
+
+function DeadlineRow({
+  task,
+  onOpenTask,
+  toggleDone,
+  courseById,
+}: {
+  task: Task;
+  onOpenTask: (t: Task) => void;
+  toggleDone: (id: string) => void;
+  courseById: Map<string, import('@/types').Course>;
+}) {
+  const course = task.courseId ? courseById.get(task.courseId) : undefined;
+  const est = formatEstimate(task.estimatedMinutes);
+  const due = relativeDue(task.dueDate);
+  return (
+    <div className="flex w-full items-center gap-3 rounded-2xl border border-transparent px-3 py-3 transition hover:border-brand-100 hover:bg-brand-50/50">
+      <Checkbox checked={task.status === 'done'} onChange={() => toggleDone(task.id)} />
+      <button onClick={() => onOpenTask(task)} className="min-w-0 flex-1 text-left">
+        <p className={`truncate text-sm font-medium ${task.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-900'}`}>
+          {task.title}
+        </p>
+        <div className="mt-0.5 flex flex-wrap items-center gap-2">
+          <PriorityDot priority={task.priority} />
+          <StatusBadge status={task.status} />
+          <CourseBadge course={course} />
+          <span className={`text-[11px] ${due.tone === 'overdue' ? 'text-rose-500' : 'text-ink-400'}`}>{due.label}</span>
+          {est && <span className="text-[11px] text-ink-400">{est}</span>}
+        </div>
+      </button>
+    </div>
+  );
+}
+
+function StatCard({
+  icon: Icon,
+  label,
+  value,
+  danger,
+}: {
+  icon: React.ComponentType<{ className?: string }>;
+  label: string;
+  value: string;
+  danger?: boolean;
+}) {
+  return (
+    <div className="flex flex-col gap-2 rounded-2xl border border-brand-100 bg-white/80 p-4 backdrop-blur-sm">
+      <div className={`flex h-8 w-8 items-center justify-center rounded-xl ${danger ? 'bg-rose-100 text-rose-500' : 'bg-brand-100 text-brand-600'}`}>
+        <Icon className="h-4 w-4" />
       </div>
+      <div>
+        <p className="text-lg font-bold text-ink-900">{value}</p>
+        <p className="text-xs text-ink-400">{label}</p>
+      </div>
+    </div>
+  );
+}
+
+function SectionCard({
+  title,
+  onViewAll,
+  viewAllLabel,
+  children,
+}: {
+  title: string;
+  onViewAll?: () => void;
+  viewAllLabel?: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="rounded-[24px] border border-brand-100 bg-white/80 p-5 backdrop-blur-sm">
+      <div className="mb-4 flex items-center justify-between">
+        <p className="text-sm font-bold text-ink-900">{title}</p>
+        {onViewAll && viewAllLabel && (
+          <button onClick={onViewAll} className="text-xs font-medium text-brand-500 hover:text-brand-600">
+            {viewAllLabel} →
+          </button>
+        )}
+      </div>
+      {children}
     </div>
   );
 }

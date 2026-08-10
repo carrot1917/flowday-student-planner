@@ -1,5 +1,13 @@
-import type { Priority, Status, Tag } from '@/types';
-import { PRIORITY_COLORS, PRIORITY_LABELS, STATUS_LABELS, TAG_COLORS, TAG_LABELS } from '@/types';
+import type { Course, Priority, Status, Tag } from '@/types';
+import {
+  PRIORITY_COLORS,
+  PRIORITY_LABELS,
+  STATUS_LABELS,
+  TAG_COLORS,
+  TAG_LABELS,
+  UNCATEGORIZED_COLOR,
+  UNCATEGORIZED_LABEL,
+} from '@/types';
 
 export function PriorityDot({ priority }: { priority: Priority }) {
   return (
@@ -15,10 +23,37 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
   );
 }
 
+/** @deprecated Phase 2 replaced this with <CourseBadge>. Kept until `Task.tag` is removed in Phase 3. */
 export function TagBadge({ tag }: { tag: Tag }) {
   return (
     <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${TAG_COLORS[tag]}`}>
       {TAG_LABELS[tag]}
+    </span>
+  );
+}
+
+const HEX_RE = /^#[0-9a-fA-F]{6}$/;
+
+/**
+ * Renders a Course chip. `course` may be undefined — that happens for tasks with
+ * no course AND for tasks whose course was deleted (we never cascade-delete
+ * tasks), so this component must never assume a course exists.
+ */
+export function CourseBadge({ course }: { course?: Course }) {
+  const name = course?.name ?? UNCATEGORIZED_LABEL;
+  const hex = course && HEX_RE.test(course.color) ? course.color : UNCATEGORIZED_COLOR;
+  return (
+    <span
+      className="inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium"
+      style={{
+        backgroundColor: `${hex}1f`,
+        color: hex,
+        boxShadow: `inset 0 0 0 1px ${hex}3d`,
+      }}
+      title={course ? `课程: ${name}` : '未归属任何课程'}
+    >
+      <span className="h-1.5 w-1.5 flex-shrink-0 rounded-full" style={{ backgroundColor: hex }} />
+      <span className="max-w-[9rem] truncate">{name}</span>
     </span>
   );
 }

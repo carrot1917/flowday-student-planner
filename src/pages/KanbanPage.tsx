@@ -3,7 +3,7 @@ import { GripVertical, ListTodo, Loader, CheckCircle2 } from 'lucide-react';
 import { useFlow } from '@/store';
 import { relativeDue } from '@/lib/date';
 import type { Status, Task } from '@/types';
-import { Checkbox, PriorityDot, TagBadge } from '@/components/ui';
+import { Checkbox, CourseBadge, PriorityDot } from '@/components/ui';
 
 const COLUMNS: { id: Status; label: string; icon: React.ComponentType<{ className?: string }>; tint: string; bg: string }[] = [
   { id: 'todo', label: '待开始', icon: ListTodo, tint: 'bg-slate-100 text-slate-500', bg: 'from-slate-50 to-white' },
@@ -16,7 +16,7 @@ interface KanbanPageProps {
 }
 
 export function KanbanPage({ onOpenTask }: KanbanPageProps) {
-  const { tasks, setStatus, toggleDone } = useFlow();
+  const { tasks, courseById, setStatus, toggleDone } = useFlow();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<Status | null>(null);
 
@@ -89,7 +89,7 @@ export function KanbanPage({ onOpenTask }: KanbanPageProps) {
                           {t.description && <p className="mt-1 line-clamp-2 text-xs text-ink-400">{t.description}</p>}
                           <div className="mt-3 flex flex-wrap items-center gap-1.5">
                             <PriorityDot priority={t.priority} />
-                            <TagBadge tag={t.tag} />
+                            <CourseBadge course={t.courseId ? courseById.get(t.courseId) : undefined} />
                             <span
                               className={`ml-auto rounded-full px-2 py-0.5 text-[10px] font-medium ${
                                 r.tone === 'overdue'

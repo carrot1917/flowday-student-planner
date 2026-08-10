@@ -12,6 +12,21 @@ export function fromISO(s: string): Date {
   return new Date(y, m - 1, d);
 }
 
+/**
+ * Strict ISO (YYYY-MM-DD) parse with a round-trip guard, so overflow dates such
+ * as 2026-13-40 / 2026-02-30 and loosely padded ones like 2026-8-1 are rejected
+ * instead of silently rolling over. Returns null for anything unparseable.
+ *
+ * Shared by every layer that must not trust a stored date string
+ * (deadline bucketing, the scheduler horizon, weekday lookup).
+ */
+export function safeFromISO(s: string): Date | null {
+  if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
+  const d = fromISO(s);
+  if (Number.isNaN(d.getTime())) return null;
+  return toISO(d) === s ? d : null;
+}
+
 export function todayISO(): string {
   return toISO(new Date());
 }

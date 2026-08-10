@@ -3,24 +3,28 @@ import { Sparkles, Wand2, CalendarClock, ClipboardList, ArrowRight, Lightbulb } 
 import { useFlow } from '@/store';
 import { aiDecompose, aiPlan, aiSummary, type PlanSlot } from '@/lib/ai';
 import { formatShort } from '@/lib/date';
+import { ScheduleSuggestions } from '@/components/ScheduleSuggestions';
 import type { Task } from '@/types';
 import { PRIORITY_LABELS } from '@/types';
 
-type Tab = 'decompose' | 'plan' | 'summary';
+type Tab = 'schedule' | 'decompose' | 'plan' | 'summary';
 
 export function AIPage({ onApplySubtasks }: { onApplySubtasks: (task: Task, subs: string[]) => void }) {
   const { tasks } = useFlow();
-  const [tab, setTab] = useState<Tab>('decompose');
+  // Default to the Phase 4D scheduler so Dashboard's「AI 帮我安排」lands on it.
+  const [tab, setTab] = useState<Tab>('schedule');
 
   return (
     <div className="animate-fade-in space-y-5">
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
+        <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Sparkles}>智能排期</TabBtn>
         <TabBtn active={tab === 'decompose'} onClick={() => setTab('decompose')} icon={Wand2}>AI 任务拆解</TabBtn>
         <TabBtn active={tab === 'plan'} onClick={() => setTab('plan')} icon={CalendarClock}>AI 计划安排</TabBtn>
         <TabBtn active={tab === 'summary'} onClick={() => setTab('summary')} icon={ClipboardList}>AI 总结</TabBtn>
       </div>
 
+      {tab === 'schedule' && <ScheduleSuggestions />}
       {tab === 'decompose' && <DecomposePanel onApplySubtasks={onApplySubtasks} />}
       {tab === 'plan' && <PlanPanel tasks={tasks} />}
       {tab === 'summary' && <SummaryPanel tasks={tasks} />}

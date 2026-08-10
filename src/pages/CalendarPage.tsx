@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { ChevronLeft, ChevronRight, Plus } from 'lucide-react';
+import { ChevronLeft, ChevronRight, Flag, Plus } from 'lucide-react';
 import { useFlow } from '@/store';
 import {
   addDays,
@@ -10,8 +10,14 @@ import {
   toISO,
   todayISO,
 } from '@/lib/date';
-import type { Task } from '@/types';
-import { PriorityDot, TagBadge } from '@/components/ui';
+import {
+  findTaskForBlock,
+  groupBlocksByDate,
+  groupTasksByDeadline,
+  sortScheduleBlocks,
+} from '@/lib/schedule';
+import type { ScheduleBlock, Task } from '@/types';
+import { CourseBadge, PriorityDot } from '@/components/ui';
 
 type View = 'month' | 'week' | 'day';
 
@@ -23,18 +29,16 @@ interface CalendarPageProps {
 }
 
 export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps) {
-  const { tasks } = useFlow();
+  const { scheduleBlocks, tasks, taskById, courseById } = useFlow();
   const [view, setView] = useState<View>('month');
   const [cursor, setCursor] = useState(() => new Date());
   const [selected, setSelected] = useState<string>(todayISO());
 
-  const tasksByDate = useMemo(() => {
-    const map: Record<string, Task[]> = {};
-    for (const t of tasks) {
-      (map[t.dueDate] ||= []).push(t);
-    }
-    return map;
-  }, [tasks]);
+  // Study sessions are sourced ONLY from ScheduleBlock (by block.date).
+  const blocksByDate = useMemo(() => groupBlocksByDate(scheduleBlocks), [scheduleBlocks]);
+  // Deadlines are sourced ONLY from Task.dueDate — kept visually separate.
+  const tasksByDueDate = useMemo(() => groupTasksByDeadline(tasks), [tasks]);
+  const dueDates = useMemo(() => new Set(Object.keys(tasksByDueDate)), [tasksByDueDate]);
 
   const move = (dir: number) => {
     if (view === 'month') setCursor(new Date(cursor.getFullYear(), cursor.getMonth() + dir, 1));
@@ -62,7 +66,11 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
         ? `${weekDays[0].getMonth() + 1}月${weekDays[0].getDate()}日 - ${weekDays[6].getMonth() + 1}月${weekDays[6].getDate()}日`
         : `${cursor.getFullYear()}年${cursor.getMonth() + 1}月${cursor.getDate()}日`;
 
-  const selectedTasks = (tasksByDate[selected] || []).sort((a, b) => (a.startTime || '99').localeCompare(b.startTime || '99'));
+  // Day detail: study sessions (sorted) + separate deadline list.
+  const selectedBlocks = sortScheduleBlocks(blocksByDate[selected] || []).filter(
+    (b) => findTaskForBlock(taskById, b) !== undefined,
+  );
+  const selectedDueTasks = tasksByDueDate[selected] || [];
 
   return (
     <div className="animate-fade-in space-y-4">
@@ -98,6 +106,16 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
         </div>
       </div>
 
+      {/* Legend: study sessions vs deadlines are intentionally distinct. */}
+      <div className="flex items-center gap-4 text-[11px] text-ink-400">
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-brand-400" /> 学习安排（ScheduleBlock）
+        </span>
+        <span className="flex items-center gap-1">
+          <span className="h-2 w-2 rounded-full bg-rose-500" /> 截止日（dueDate）
+        </span>
+      </div>
+
       <div className="grid gap-4 lg:grid-cols-3">
         {/* Calendar */}
         <div className="lg:col-span-2 rounded-2xl border border-brand-50 bg-white p-4">
@@ -114,7 +132,8 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
                   const inMonth = d.getMonth() === cursor.getMonth();
                   const isToday = isSameDay(d, new Date());
                   const isSelected = iso === selected;
-                  const dayTasks = tasksByDate[iso] || [];
+                  const dayBlocks = blocksByDate[iso] || [];
+                  const hasDue = dueDates.has(iso);
                   return (
                     <button
                       key={iso}
@@ -132,21 +151,28 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
                       >
                         {d.getDate()}
                       </span>
+                      {hasDue && (
+                        <span className="absolute right-1.5 top-1.5 h-1.5 w-1.5 rounded-full bg-rose-500" />
+                      )}
                       <div className="mt-1 space-y-0.5">
-                        {dayTasks.slice(0, 3).map((t) => (
-                          <div
-                            key={t.id}
-                            onClick={(e) => { e.stopPropagation(); onOpenTask(t); }}
-                            className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] hover:bg-brand-100"
-                          >
-                            <PriorityDot priority={t.priority} />
-                            <span className={`truncate ${t.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-600'}`}>
-                              {t.title}
-                            </span>
-                          </div>
-                        ))}
-                        {dayTasks.length > 3 && (
-                          <p className="px-1 text-[10px] text-ink-400">+{dayTasks.length - 3} 更多</p>
+                        {dayBlocks.slice(0, 3).map((b) => {
+                          const task = findTaskForBlock(taskById, b);
+                          if (!task) return null;
+                          return (
+                            <div
+                              key={b.id}
+                              onClick={(e) => { e.stopPropagation(); onOpenTask(task); }}
+                              className="flex items-center gap-1 rounded px-1 py-0.5 text-[10px] hover:bg-brand-100"
+                            >
+                              <PriorityDot priority={task.priority} />
+                              <span className={`truncate ${task.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-600'}`}>
+                                {task.title}
+                              </span>
+                            </div>
+                          );
+                        })}
+                        {dayBlocks.length > 3 && (
+                          <p className="px-1 text-[10px] text-ink-400">+{dayBlocks.length - 3} 更多</p>
                         )}
                       </div>
                     </button>
@@ -162,7 +188,8 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
                 const iso = toISO(d);
                 const isToday = isSameDay(d, new Date());
                 const isSelected = iso === selected;
-                const dayTasks = tasksByDate[iso] || [];
+                const dayBlocks = blocksByDate[iso] || [];
+                const dueTasks = tasksByDueDate[iso] || [];
                 return (
                   <button
                     key={iso}
@@ -181,22 +208,31 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
                         {d.getDate()}
                       </span>
                     </div>
+                    {dueTasks.length > 0 && (
+                      <div className="mb-1 flex items-center justify-center gap-1 text-[10px] font-medium text-rose-500">
+                        <Flag className="h-2.5 w-2.5" /> 截止 {dueTasks.length}
+                      </div>
+                    )}
                     <div className="flex-1 space-y-1 overflow-y-auto">
-                      {dayTasks.map((t) => (
-                        <div
-                          key={t.id}
-                          onClick={(e) => { e.stopPropagation(); onOpenTask(t); }}
-                          className="rounded-md bg-white px-1.5 py-1 text-[10px] shadow-sm hover:bg-brand-100"
-                        >
-                          <div className="flex items-center gap-1">
-                            <PriorityDot priority={t.priority} />
-                            <span className={`truncate ${t.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-600'}`}>
-                              {t.title}
-                            </span>
+                      {dayBlocks.map((b) => {
+                        const task = findTaskForBlock(taskById, b);
+                        if (!task) return null;
+                        return (
+                          <div
+                            key={b.id}
+                            onClick={(e) => { e.stopPropagation(); onOpenTask(task); }}
+                            className="rounded-md bg-white px-1.5 py-1 text-[10px] shadow-sm hover:bg-brand-100"
+                          >
+                            <div className="flex items-center gap-1">
+                              <PriorityDot priority={task.priority} />
+                              <span className={`truncate ${task.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-600'}`}>
+                                {task.title}
+                              </span>
+                            </div>
+                            <p className="mt-0.5 text-ink-400">{b.startTime}</p>
                           </div>
-                          {t.startTime && <p className="mt-0.5 text-ink-400">{t.startTime}</p>}
-                        </div>
-                      ))}
+                        );
+                      })}
                     </div>
                   </button>
                 );
@@ -207,26 +243,31 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
           {view === 'day' && (
             <div className="space-y-1">
               {Array.from({ length: 24 }, (_, h) => {
-                const hourTasks = (tasksByDate[selected] || []).filter(
-                  (t) => t.startTime && parseInt(t.startTime.split(':')[0]) === h,
+                const hourBlocks = (blocksByDate[selected] || []).filter(
+                  (b) => parseInt(b.startTime.split(':')[0]) === h,
                 );
                 return (
                   <div key={h} className="flex gap-3 border-t border-brand-50 py-2">
                     <span className="w-12 flex-shrink-0 text-xs font-medium text-ink-400">{String(h).padStart(2, '0')}:00</span>
                     <div className="flex-1 space-y-1">
-                      {hourTasks.map((t) => (
-                        <button
-                          key={t.id}
-                          onClick={() => onOpenTask(t)}
-                          className="flex w-full items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-left transition hover:bg-brand-100"
-                        >
-                          <PriorityDot priority={t.priority} />
-                          <span className={`flex-1 truncate text-sm ${t.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-700'}`}>
-                            {t.title}
-                          </span>
-                          <TagBadge tag={t.tag} />
-                        </button>
-                      ))}
+                      {hourBlocks.map((b) => {
+                        const task = findTaskForBlock(taskById, b);
+                        if (!task) return null;
+                        return (
+                          <button
+                            key={b.id}
+                            onClick={() => onOpenTask(task)}
+                            className="flex w-full items-center gap-2 rounded-lg bg-brand-50 px-3 py-2 text-left transition hover:bg-brand-100"
+                          >
+                            <PriorityDot priority={task.priority} />
+                            <span className={`flex-1 truncate text-sm ${task.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-700'}`}>
+                              {task.title}
+                            </span>
+                            <CourseBadge course={task.courseId ? courseById.get(task.courseId) : undefined} />
+                            <span className="text-[11px] text-ink-400">{b.startTime}-{b.endTime}</span>
+                          </button>
+                        );
+                      })}
                     </div>
                   </div>
                 );
@@ -249,24 +290,57 @@ export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps)
               <Plus className="h-3.5 w-3.5" /> 添加
             </button>
           </div>
-          {selectedTasks.length === 0 ? (
-            <p className="py-10 text-center text-xs text-ink-400">这一天还没有安排任务</p>
+
+          {/* Study sessions — sourced from ScheduleBlock */}
+          <p className="mb-2 text-xs font-semibold text-ink-500">今日学习安排</p>
+          {selectedBlocks.length === 0 ? (
+            <p className="py-3 text-center text-xs text-ink-400">这一天还没有学习安排</p>
           ) : (
             <div className="stagger space-y-2">
-              {selectedTasks.map((t) => (
+              {selectedBlocks.map((b) => {
+                const task = findTaskForBlock(taskById, b);
+                if (!task) return null;
+                return (
+                  <button
+                    key={b.id}
+                    onClick={() => onOpenTask(task)}
+                    className="flex w-full items-center gap-2 rounded-xl border border-brand-50 px-3 py-2.5 text-left transition hover:bg-brand-50/50"
+                  >
+                    <PriorityDot priority={task.priority} />
+                    <div className="min-w-0 flex-1">
+                      <p className={`truncate text-sm font-medium ${task.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-900'}`}>
+                        {task.title}
+                      </p>
+                      <p className="text-[11px] text-ink-400">{b.startTime} - {b.endTime} · {b.plannedMinutes} 分钟</p>
+                    </div>
+                    <CourseBadge course={task.courseId ? courseById.get(task.courseId) : undefined} />
+                  </button>
+                );
+              })}
+            </div>
+          )}
+
+          {/* Deadlines — sourced from Task.dueDate, visually distinct */}
+          <p className="mb-2 mt-4 flex items-center gap-1 text-xs font-semibold text-rose-500">
+            <Flag className="h-3 w-3" /> 今日截止
+          </p>
+          {selectedDueTasks.length === 0 ? (
+            <p className="py-3 text-center text-xs text-ink-400">今日无任务截止</p>
+          ) : (
+            <div className="space-y-2">
+              {selectedDueTasks.map((t) => (
                 <button
                   key={t.id}
                   onClick={() => onOpenTask(t)}
-                  className="flex w-full items-center gap-2 rounded-xl border border-brand-50 px-3 py-2.5 text-left transition hover:bg-brand-50/50"
+                  className="flex w-full items-center gap-2 rounded-xl border border-rose-100 bg-rose-50/40 px-3 py-2.5 text-left transition hover:bg-rose-50"
                 >
-                  <PriorityDot priority={t.priority} />
+                  <Flag className="h-3.5 w-3.5 flex-shrink-0 text-rose-500" />
                   <div className="min-w-0 flex-1">
                     <p className={`truncate text-sm font-medium ${t.status === 'done' ? 'text-ink-400 line-through' : 'text-ink-900'}`}>
                       {t.title}
                     </p>
-                    {t.startTime && <p className="text-[11px] text-ink-400">{t.startTime}{t.endTime && ` - ${t.endTime}`}</p>}
                   </div>
-                  <TagBadge tag={t.tag} />
+                  <CourseBadge course={t.courseId ? courseById.get(t.courseId) : undefined} />
                 </button>
               ))}
             </div>

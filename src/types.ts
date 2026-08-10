@@ -6,19 +6,61 @@ export type Status = 'todo' | 'doing' | 'done';
 
 export type Tag = 'math' | 'english' | 'coding' | 'reading' | 'other';
 
+// ----- Phase 1: new domain types for the multi-user-ready model -----
+
+export type Weekday =
+  | 'monday'
+  | 'tuesday'
+  | 'wednesday'
+  | 'thursday'
+  | 'friday'
+  | 'saturday'
+  | 'sunday';
+
+// A real course the user studies. Replaces the old fixed `tag` categories.
+export interface Course {
+  id: string;
+  name: string;
+  color: string; // hex, e.g. '#3494fb' — Supabase / UI friendly
+  createdAt: number;
+}
+
+// A concrete study session: WHEN the user plans to study a Task.
+// Distinct from `dueDate` (the deadline) and from `Availability` (free time).
+export interface ScheduleBlock {
+  id: string;
+  taskId: string;
+  date: string; // YYYY-MM-DD — the day the study session happens
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+  plannedMinutes: number;
+}
+
+// One free-study interval on a given weekday.
+export interface AvailabilitySlot {
+  startTime: string; // HH:mm
+  endTime: string; // HH:mm
+}
+
+export type WeeklyAvailability = Record<Weekday, AvailabilitySlot[]>;
+
 export interface Task {
   id: string;
   title: string;
   description: string;
-  dueDate: string; // ISO date (YYYY-MM-DD)
-  startTime: string; // HH:mm, optional schedule slot
-  endTime: string; // HH:mm
+  dueDate: string; // ISO date (YYYY-MM-DD) — the DEADLINE
+  // --- DEPRECATED scheduling fields (kept for migration / backward-compat) ---
+  startTime: string; // HH:mm — legacy; superseded by ScheduleBlock
+  endTime: string; // HH:mm — legacy; superseded by ScheduleBlock
   priority: Priority;
-  tag: Tag;
+  tag: Tag; // DEPRECATED category — superseded by Course (kept for migration)
+  // --- new fields ---
+  courseId?: string; // links to Course
   status: Status;
   createdAt: number;
   completedAt: number | null;
   subtasks: Subtask[];
+  estimatedMinutes?: number; // total expected study time
 }
 
 export interface Subtask {
@@ -34,8 +76,14 @@ export interface Settings {
   startOfWeek: 0 | 1; // 0 = Sunday, 1 = Monday
 }
 
+// Unified, versioned application state (localStorage schema v2).
 export interface AppState {
+  version: number;
+  hasSeededDemo: boolean; // once true, demo is never auto-generated again
+  courses: Course[];
   tasks: Task[];
+  scheduleBlocks: ScheduleBlock[];
+  availability: WeeklyAvailability;
   settings: Settings;
 }
 
@@ -47,6 +95,15 @@ export const TAG_LABELS: Record<Tag, string> = {
   other: '其他',
 };
 
+// Hex colors for courses (Supabase-friendly, unlike the Tailwind class strings).
+export const TAG_HEX: Record<Tag, string> = {
+  math: '#f43f5e',
+  english: '#f59e0b',
+  coding: '#0ea5e9',
+  reading: '#8b5cf6',
+  other: '#64748b',
+};
+
 export const TAG_COLORS: Record<Tag, string> = {
   math: 'bg-rose-100 text-rose-600 ring-rose-200',
   english: 'bg-amber-100 text-amber-600 ring-amber-200',
@@ -54,6 +111,25 @@ export const TAG_COLORS: Record<Tag, string> = {
   reading: 'bg-violet-100 text-violet-600 ring-violet-200',
   other: 'bg-slate-100 text-slate-600 ring-slate-200',
 };
+
+// ----- Phase 2: Course presentation constants -----
+
+// Shown whenever a Task has no courseId, or points at a Course that no longer
+// exists (e.g. the Course was deleted — tasks are NEVER deleted with it).
+export const UNCATEGORIZED_LABEL = '未分类';
+export const UNCATEGORIZED_COLOR = '#94a3b8';
+
+// A small fixed palette keeps colors on-brand without a color-picker dependency.
+export const COURSE_PALETTE: string[] = [
+  '#f43f5e', // rose
+  '#f97316', // orange
+  '#f59e0b', // amber
+  '#10b981', // emerald
+  '#0ea5e9', // sky
+  '#3494fb', // brand
+  '#8b5cf6', // violet
+  '#64748b', // slate
+];
 
 export const PRIORITY_LABELS: Record<Priority, string> = {
   high: '高',
@@ -72,3 +148,15 @@ export const STATUS_LABELS: Record<Status, string> = {
   doing: '进行中',
   done: '已完成',
 };
+
+export function emptyAvailability(): WeeklyAvailability {
+  return {
+    monday: [],
+    tuesday: [],
+    wednesday: [],
+    thursday: [],
+    friday: [],
+    saturday: [],
+    sunday: [],
+  };
+}
