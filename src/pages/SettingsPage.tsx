@@ -1,5 +1,5 @@
 import { Bell, BellOff, Clock, Check, GraduationCap, Pencil, Plus, Trash2, X, CircleAlert } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useSettings, useCourses, useTasks, useActions } from '@/store';
 import { notificationsSupported, requestPermission } from '@/lib/notify';
 import { minutesToHHMM } from '@/lib/date';
 import { suggestCourseColor } from '@/lib/domain';
@@ -7,7 +7,8 @@ import { COURSE_PALETTE, UNCATEGORIZED_LABEL } from '@/types';
 import { useMemo, useState } from 'react';
 
 export function SettingsPage() {
-  const { settings, updateSettings } = useFlow();
+  const { settings } = useSettings();
+  const { updateSettings } = useActions();
   const [permission, setPermission] = useState<NotificationPermission>(() =>
     notificationsSupported() ? Notification.permission : 'denied',
   );
@@ -125,7 +126,9 @@ export function SettingsPage() {
 }
 
 function CourseManager() {
-  const { courses, tasks, addCourse, updateCourse, deleteCourse } = useFlow();
+  const { courses } = useCourses();
+  const { tasks } = useTasks();
+  const { addCourse, updateCourse, deleteCourse } = useActions();
 
   const [newName, setNewName] = useState('');
   const [newColor, setNewColor] = useState(() => suggestCourseColor(courses));

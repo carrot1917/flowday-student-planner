@@ -10,7 +10,7 @@ import { CalendarPage } from '@/pages/CalendarPage';
 import { AvailabilityPage } from '@/pages/AvailabilityPage';
 import { AIPage } from '@/pages/AIPage';
 import { SettingsPage } from '@/pages/SettingsPage';
-import { FlowProvider, useFlow } from '@/store';
+import { FlowProvider, useActions } from '@/store';
 import type { PageId } from '@/nav';
 import type { Task } from '@/types';
 import { createSubtask } from '@/lib/storage';
@@ -21,7 +21,7 @@ function Shell() {
   const [modalTask, setModalTask] = useState<Task | null>(null);
   const [modalOpen, setModalOpen] = useState(false);
   const [defaultDate, setDefaultDate] = useState<string | undefined>(undefined);
-  const { updateTask } = useFlow();
+  const { updateTask } = useActions();
 
   const openAdd = (date?: string) => {
     setModalTask(null);

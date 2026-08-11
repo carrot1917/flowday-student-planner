@@ -1,6 +1,6 @@
 import type { Task } from '@/types';
 import { createSubtask } from './storage';
-import { fromISO, diffDays, todayISO } from './date';
+import { fromISO, diffDays, todayISO, safeFromISO, toISO, addDays } from './date';
 
 // Rule-based "AI" helpers. They run entirely in the browser so the app
 // works offline with no API key. The shapes are designed to be swapped
@@ -34,6 +34,11 @@ export function aiDecomposeSubtasks(title: string) {
 }
 
 // Generate a study plan for the next N days based on workload.
+//
+// `from` is injected by the caller (the UI layer supplies the current date) so
+// this function is pure and fully testable with a fixed `from` — it never reads
+// the system clock. All date math uses local-time helpers (toISO / addDays) so
+// there is no UTC off-by-one.
 export interface PlanSlot {
   date: string;
   time: string;
@@ -41,10 +46,13 @@ export interface PlanSlot {
   priority: string;
 }
 
-export function aiPlan(tasks: Task[], days = 7): PlanSlot[] {
-  const today = new Date();
+export function aiPlan(tasks: Task[], from: string, days = 7): PlanSlot[] {
+  const base = safeFromISO(from);
+  if (!base) return [];
+
+  // Only plan tasks that are pending AND have a parseable deadline.
   const pending = tasks
-    .filter((t) => t.status !== 'done')
+    .filter((t) => t.status !== 'done' && safeFromISO(t.dueDate) !== null)
     .sort((a, b) => {
       const d = fromISO(a.dueDate).getTime() - fromISO(b.dueDate).getTime();
       if (d !== 0) return d;
@@ -52,27 +60,45 @@ export function aiPlan(tasks: Task[], days = 7): PlanSlot[] {
       return order[a.priority] - order[b.priority];
     });
 
-  const slots: PlanSlot[] = [];
   const dailySlots = ['08:00', '10:00', '14:00', '16:00', '19:30'];
-  let slotIdx = 0;
-  let dayOffset = 0;
+  const maxPerDay = dailySlots.length;
+  const dayCount = new Array(days).fill(0);
+  const slots: PlanSlot[] = [];
 
   for (const t of pending) {
     const due = fromISO(t.dueDate);
-    const slack = diffDays(due, today);
-    const targetDay = Math.max(0, Math.min(days - 1, slack - 1 >= 0 ? Math.floor(slotIdx / dailySlots.length) : dayOffset));
-    const date = new Date(today);
-    date.setDate(date.getDate() + targetDay);
-    const time = dailySlots[slotIdx % dailySlots.length];
-    slots.push({
-      date: date.toISOString().slice(0, 10),
-      time,
-      taskTitle: t.title,
-      priority: t.priority,
-    });
-    slotIdx++;
-    dayOffset = Math.floor(slotIdx / dailySlots.length);
+    // Days from `from` until the deadline (clamped to >= 0 for overdue tasks).
+    const dueOffset = Math.max(0, diffDays(due, base));
+    // The latest day we can place this task on: within the horizon AND on or
+    // before the deadline. If the deadline is beyond the horizon, the last
+    // horizon day is the cap.
+    const lastDay = Math.min(dueOffset, days - 1);
+
+    // Greedy earliest-fit: walk from day 0 to lastDay, place on the first day
+    // that still has an open slot. This respects deadlines (urgent tasks get
+    // early slots) while spreading work across days.
+    for (let d = 0; d <= lastDay; d++) {
+      if (dayCount[d] < maxPerDay) {
+        slots.push({
+          date: toISO(addDays(base, d)),
+          time: dailySlots[dayCount[d]],
+          taskTitle: t.title,
+          priority: t.priority,
+        });
+        dayCount[d]++;
+        break;
+      }
+    }
+    // If every day up to the deadline is full, the task is silently skipped —
+    // the user can see in the plan that not everything fit.
   }
+
+  // Sort chronologically for display.
+  slots.sort((a, b) => {
+    if (a.date !== b.date) return a.date < b.date ? -1 : 1;
+    return a.time.localeCompare(b.time);
+  });
+
   return slots;
 }
 

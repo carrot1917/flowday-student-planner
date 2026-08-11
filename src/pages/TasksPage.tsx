@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Search, ListTodo, ArrowUpDown, Filter } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useCourses, useActions } from '@/store';
 import { relativeDue } from '@/lib/date';
 import { formatEstimate } from '@/lib/domain';
 import type { Priority, Status, Task } from '@/types';
@@ -18,7 +18,9 @@ type CourseFilter = 'all' | 'none' | string;
 const PRIORITY_ORDER: Record<Priority, number> = { high: 0, medium: 1, low: 2 };
 
 export function TasksPage({ onOpenTask }: TasksPageProps) {
-  const { tasks, courses, courseById, toggleDone } = useFlow();
+  const { tasks } = useTasks();
+  const { courses, courseById } = useCourses();
+  const { toggleDone } = useActions();
   const [query, setQuery] = useState('');
   const [statusFilter, setStatusFilter] = useState<Status | 'all'>('all');
   const [courseFilter, setCourseFilter] = useState<CourseFilter>('all');

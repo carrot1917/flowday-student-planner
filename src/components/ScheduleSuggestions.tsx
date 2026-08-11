@@ -11,7 +11,7 @@
 
 import { useMemo, useState } from 'react';
 import { AlertTriangle, CalendarClock, CheckCircle2, Info, Sparkles, X } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useScheduleBlocks, useAvailability, useActions } from '@/store';
 import { buildScheduleInput } from '@/lib/scheduleRun';
 import { generateSchedule, type ScheduleResult, type UnscheduledReason } from '@/lib/scheduler';
 import { detectScheduleConflicts, type ScheduleConflict } from '@/lib/conflict';
@@ -28,7 +28,10 @@ const UNSCHEDULED_REASON_TEXT: Record<UnscheduledReason, string> = {
 };
 
 export function ScheduleSuggestions() {
-  const { tasks, availability, scheduleBlocks, taskById, addScheduleBlocks } = useFlow();
+  const { tasks, taskById } = useTasks();
+  const { scheduleBlocks } = useScheduleBlocks();
+  const { availability } = useAvailability();
+  const { addScheduleBlocks } = useActions();
   const [result, setResult] = useState<ScheduleResult | null>(null);
   const [confirmedCount, setConfirmedCount] = useState(0);
 

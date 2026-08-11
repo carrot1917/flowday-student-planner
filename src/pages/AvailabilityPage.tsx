@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { Calendar, CircleAlert, Clock, Plus, Trash2 } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useAvailability, useSettings, useActions } from '@/store';
 import {
   WEEKDAY_LABELS,
   formatEstimate,
@@ -33,7 +33,9 @@ function nextSlot(slots: AvailabilitySlot[]): AvailabilitySlot {
 }
 
 export function AvailabilityPage() {
-  const { availability, settings, updateAvailability } = useFlow();
+  const { availability } = useAvailability();
+  const { settings } = useSettings();
+  const { updateAvailability } = useActions();
 
   const days = useMemo(() => weekdaysOrdered(settings.startOfWeek), [settings.startOfWeek]);
   const weekMinutes = useMemo(

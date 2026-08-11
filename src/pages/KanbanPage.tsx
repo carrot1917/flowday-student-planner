@@ -1,6 +1,6 @@
 import { useState, type DragEvent } from 'react';
 import { GripVertical, ListTodo, Loader, CheckCircle2 } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useCourses, useActions } from '@/store';
 import { relativeDue } from '@/lib/date';
 import type { Status, Task } from '@/types';
 import { Checkbox, CourseBadge, PriorityDot } from '@/components/ui';
@@ -16,7 +16,9 @@ interface KanbanPageProps {
 }
 
 export function KanbanPage({ onOpenTask }: KanbanPageProps) {
-  const { tasks, courseById, setStatus, toggleDone } = useFlow();
+  const { tasks } = useTasks();
+  const { courseById } = useCourses();
+  const { setStatus, toggleDone } = useActions();
   const [dragId, setDragId] = useState<string | null>(null);
   const [overCol, setOverCol] = useState<Status | null>(null);
 

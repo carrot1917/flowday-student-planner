@@ -363,7 +363,8 @@ describe('store exposes availability (source-level)', () => {
 
 describe('AvailabilityPage wiring (source-level)', () => {
   it('reads and writes availability through the store', () => {
-    expect(availabilityPageSrc).toContain('useFlow()');
+    expect(availabilityPageSrc).toContain('useAvailability()');
+    expect(availabilityPageSrc).toContain('useActions()');
     expect(availabilityPageSrc).toContain('availability[day]');
     expect(availabilityPageSrc).toContain('updateAvailability(day, slots)');
   });
@@ -375,10 +376,13 @@ describe('AvailabilityPage wiring (source-level)', () => {
   });
 
   it('is availability-only — no scheduler preview and no Task coupling', () => {
-    // Only these three store fields are consumed (prose in comments may still
-    // mention ScheduleBlock, so match identifiers, not the whole text).
+    // The page consumes exactly three store slices via split hooks.
     expect(availabilityPageSrc).toContain(
-      'const { availability, settings, updateAvailability } = useFlow();',
+      'const { availability } = useAvailability();',
+    );
+    expect(availabilityPageSrc).toContain('const { settings } = useSettings();');
+    expect(availabilityPageSrc).toContain(
+      'const { updateAvailability } = useActions();',
     );
     expect(availabilityPageSrc).not.toMatch(/\bscheduleBlocks\b/);
     expect(availabilityPageSrc).not.toMatch(/\btasks\b/);

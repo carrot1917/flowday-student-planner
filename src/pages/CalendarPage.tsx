@@ -1,6 +1,6 @@
 import { useMemo, useState } from 'react';
 import { ChevronLeft, ChevronRight, Flag, Plus } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useCourses, useScheduleBlocks } from '@/store';
 import {
   addDays,
   fromISO,
@@ -29,7 +29,9 @@ interface CalendarPageProps {
 }
 
 export function CalendarPage({ onOpenTask, onAddTaskOnDate }: CalendarPageProps) {
-  const { scheduleBlocks, tasks, taskById, courseById } = useFlow();
+  const { tasks, taskById } = useTasks();
+  const { courseById } = useCourses();
+  const { scheduleBlocks } = useScheduleBlocks();
   const [view, setView] = useState<View>('month');
   const [cursor, setCursor] = useState(() => new Date());
   const [selected, setSelected] = useState<string>(todayISO());

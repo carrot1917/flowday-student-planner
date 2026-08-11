@@ -2,7 +2,7 @@ import { useEffect, useMemo, useState } from 'react';
 import { X, Trash2, Plus, Sparkles, Clock3, CircleAlert } from 'lucide-react';
 import type { Priority, Task } from '@/types';
 import { PRIORITY_LABELS, UNCATEGORIZED_COLOR, UNCATEGORIZED_LABEL } from '@/types';
-import { useFlow } from '@/store';
+import { useCourses, useActions } from '@/store';
 import {
   ESTIMATED_MINUTES_PRESETS,
   findCourse,
@@ -23,7 +23,8 @@ interface TaskModalProps {
 const PRIORITIES: Priority[] = ['high', 'medium', 'low'];
 
 export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
-  const { addTask, updateTask, deleteTask, courses } = useFlow();
+  const { addTask, updateTask, deleteTask } = useActions();
+  const { courses } = useCourses();
   const isEdit = !!task;
 
   const [draft, setDraft] = useState<Task>(() =>

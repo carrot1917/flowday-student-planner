@@ -1,6 +1,6 @@
 import { useMemo } from 'react';
 import { Plus, Calendar } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useCourses, useActions, useSettings } from '@/store';
 import { relativeDue, todayISO } from '@/lib/date';
 import { deadlineBucket, type DeadlineBucket } from '@/lib/schedule';
 import { formatEstimate } from '@/lib/domain';
@@ -29,7 +29,10 @@ const TONE_CLASS: Record<string, string> = {
 };
 
 export function TimelinePage({ onOpenTask, onAddTaskOnDate }: TimelinePageProps) {
-  const { tasks, courseById, toggleDone, settings } = useFlow();
+  const { tasks } = useTasks();
+  const { courseById } = useCourses();
+  const { toggleDone } = useActions();
+  const { settings } = useSettings();
 
   const buckets = useMemo(() => {
     const groups: Record<DeadlineBucket, Task[]> = {

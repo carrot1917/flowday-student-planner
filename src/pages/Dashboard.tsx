@@ -1,6 +1,6 @@
 import { AlertTriangle, CalendarClock, CheckCircle2, Clock, Plus, Sparkles, TrendingUp } from 'lucide-react';
 import { useMemo } from 'react';
-import { useFlow } from '@/store';
+import { useTasks, useCourses, useScheduleBlocks, useActions } from '@/store';
 import { formatEstimate } from '@/lib/domain';
 import { todayISO, formatLong, relativeDue } from '@/lib/date';
 import { aiSummary } from '@/lib/ai';
@@ -29,7 +29,10 @@ const ENCOURAGEMENTS = [
 ];
 
 export function Dashboard({ onOpenTask, onAddTask, onNavigate }: DashboardProps) {
-  const { tasks, courseById, scheduleBlocks, taskById, toggleDone } = useFlow();
+  const { tasks, taskById } = useTasks();
+  const { courseById } = useCourses();
+  const { scheduleBlocks } = useScheduleBlocks();
+  const { toggleDone } = useActions();
   const today = todayISO();
 
   const { todayStudy, todayDue, overdue, plannedMin, done, progress } = useMemo(() => {

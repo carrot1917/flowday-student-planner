@@ -24,15 +24,31 @@ import { mergeScheduleBlocks } from '@/lib/scheduleRun';
 
 export type CourseResult = { ok: true; course: Course } | { ok: false; message: string };
 
-interface FlowContextValue {
+// ----------------------------------------------------------------- Slice types
+//
+// The store is split into independent Contexts so a component that only reads
+// `settings` doesn't re-render when `tasks` changes. The Actions slice is
+// stable (useMemo deps: []) — every action uses either `setState(updater)` or
+// `stateRef.current`, so it never needs to be recreated.
+
+interface TasksSlice {
   tasks: Task[];
+  taskById: Map<string, Task>;
+}
+interface CoursesSlice {
   courses: Course[];
   courseById: Map<string, Course>;
+}
+interface ScheduleBlocksSlice {
   scheduleBlocks: ScheduleBlock[];
-  taskById: Map<string, Task>;
-  /** When the user CAN study (Phase 4A). Input for the Phase 4B scheduler. */
+}
+interface AvailabilitySlice {
   availability: WeeklyAvailability;
+}
+interface SettingsSlice {
   settings: Settings;
+}
+interface ActionsSlice {
   addTask: (partial?: Partial<Task>) => Task;
   updateTask: (id: string, patch: Partial<Task>) => void;
   deleteTask: (id: string) => void;
@@ -49,7 +65,14 @@ interface FlowContextValue {
   addScheduleBlocks: (blocks: ScheduleBlock[]) => void;
 }
 
-const FlowContext = createContext<FlowContextValue | null>(null);
+// ----------------------------------------------------------------- Contexts
+
+const TasksContext = createContext<TasksSlice | null>(null);
+const CoursesContext = createContext<CoursesSlice | null>(null);
+const ScheduleBlocksContext = createContext<ScheduleBlocksSlice | null>(null);
+const AvailabilityContext = createContext<AvailabilitySlice | null>(null);
+const SettingsContext = createContext<SettingsSlice | null>(null);
+const ActionsContext = createContext<ActionsSlice | null>(null);
 
 export function FlowProvider({ children }: { children: ReactNode }) {
   const [initial] = useState(loadState);
@@ -73,14 +96,10 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     );
   }, []);
 
-  const value = useMemo<FlowContextValue>(() => ({
-    tasks: state.tasks,
-    courses: state.courses,
-    courseById: courseMap(state.courses),
-    scheduleBlocks: state.scheduleBlocks,
-    taskById: new Map<string, Task>(state.tasks.map((t) => [t.id, t])),
-    availability: state.availability,
-    settings: state.settings,
+  // ---- Actions: stable for the provider's lifetime ----
+  // Every action uses `setState(updater)` or `stateRef.current`, so the set has
+  // zero reactive dependencies and is created exactly once.
+  const actions = useMemo<ActionsSlice>(() => ({
     addTask: (partial) => {
       const t = createTask(partial);
       setState((s) => ({ ...s, tasks: [t, ...s.tasks] }));
@@ -116,18 +135,18 @@ export function FlowProvider({ children }: { children: ReactNode }) {
         ),
       })),
     addCourse: (name, color) => {
-      const check = validateCourseName(name, state.courses);
+      const check = validateCourseName(name, stateRef.current.courses);
       if (!check.ok) return { ok: false, message: check.message };
       const course = createCourse(check.name, color);
       setState((s) => addCourseToState(s, course));
       return { ok: true, course };
     },
     updateCourse: (id, patch) => {
-      const current = state.courses.find((c) => c.id === id);
+      const current = stateRef.current.courses.find((c) => c.id === id);
       if (!current) return { ok: false, message: '课程不存在' };
       const next: Partial<Pick<Course, 'name' | 'color'>> = {};
       if (patch.name !== undefined) {
-        const check = validateCourseName(patch.name, state.courses, id);
+        const check = validateCourseName(patch.name, stateRef.current.courses, id);
         if (!check.ok) return { ok: false, message: check.message };
         next.name = check.name;
       }
@@ -149,13 +168,97 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     // pure helper. Persistence is the existing effect — storage is untouched.
     addScheduleBlocks: (blocks) =>
       setState((s) => ({ ...s, scheduleBlocks: mergeScheduleBlocks(s.scheduleBlocks, blocks) })),
-  }), [state]);
+  }), []);
 
-  return <FlowContext.Provider value={value}>{children}</FlowContext.Provider>;
+  // ---- Derived slices: each memoized on its own slice of state ----
+  // A change to `tasks` recreates only `tasksSlice`; components that read only
+  // `settings` or `courses` are not affected.
+  const tasksSlice = useMemo<TasksSlice>(
+    () => ({
+      tasks: state.tasks,
+      taskById: new Map(state.tasks.map((t) => [t.id, t])),
+    }),
+    [state.tasks],
+  );
+
+  const coursesSlice = useMemo<CoursesSlice>(
+    () => ({
+      courses: state.courses,
+      courseById: courseMap(state.courses),
+    }),
+    [state.courses],
+  );
+
+  const scheduleBlocksSlice = useMemo<ScheduleBlocksSlice>(
+    () => ({ scheduleBlocks: state.scheduleBlocks }),
+    [state.scheduleBlocks],
+  );
+
+  const availabilitySlice = useMemo<AvailabilitySlice>(
+    () => ({ availability: state.availability }),
+    [state.availability],
+  );
+
+  const settingsSlice = useMemo<SettingsSlice>(
+    () => ({ settings: state.settings }),
+    [state.settings],
+  );
+
+  return (
+    <TasksContext.Provider value={tasksSlice}>
+      <CoursesContext.Provider value={coursesSlice}>
+        <ScheduleBlocksContext.Provider value={scheduleBlocksSlice}>
+          <AvailabilityContext.Provider value={availabilitySlice}>
+            <SettingsContext.Provider value={settingsSlice}>
+              <ActionsContext.Provider value={actions}>
+                {children}
+              </ActionsContext.Provider>
+            </SettingsContext.Provider>
+          </AvailabilityContext.Provider>
+        </ScheduleBlocksContext.Provider>
+      </CoursesContext.Provider>
+    </TasksContext.Provider>
+  );
 }
 
-export function useFlow(): FlowContextValue {
-  const ctx = useContext(FlowContext);
-  if (!ctx) throw new Error('useFlow must be used within FlowProvider');
+// ----------------------------------------------------------------- Hooks
+//
+// Each hook subscribes to exactly one Context, so a component that calls
+// `useSettings()` won't re-render when `tasks` changes — only when `settings`
+// does. `useActions()` is stable for the provider's lifetime.
+
+export function useTasks(): TasksSlice {
+  const ctx = useContext(TasksContext);
+  if (!ctx) throw new Error('useTasks must be used within FlowProvider');
+  return ctx;
+}
+
+export function useCourses(): CoursesSlice {
+  const ctx = useContext(CoursesContext);
+  if (!ctx) throw new Error('useCourses must be used within FlowProvider');
+  return ctx;
+}
+
+export function useScheduleBlocks(): ScheduleBlocksSlice {
+  const ctx = useContext(ScheduleBlocksContext);
+  if (!ctx) throw new Error('useScheduleBlocks must be used within FlowProvider');
+  return ctx;
+}
+
+export function useAvailability(): AvailabilitySlice {
+  const ctx = useContext(AvailabilityContext);
+  if (!ctx) throw new Error('useAvailability must be used within FlowProvider');
+  return ctx;
+}
+
+export function useSettings(): SettingsSlice {
+  const ctx = useContext(SettingsContext);
+  if (!ctx) throw new Error('useSettings must be used within FlowProvider');
+  return ctx;
+}
+
+export function useActions(): ActionsSlice {
+  const ctx = useContext(ActionsContext);
+  if (!ctx) throw new Error('useActions must be used within FlowProvider');
   return ctx;
 }

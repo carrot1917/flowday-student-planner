@@ -1,8 +1,8 @@
 import { useMemo, useState } from 'react';
 import { Sparkles, Wand2, CalendarClock, ClipboardList, ArrowRight, Lightbulb } from 'lucide-react';
-import { useFlow } from '@/store';
+import { useTasks, useActions } from '@/store';
 import { aiDecompose, aiPlan, aiSummary, type PlanSlot } from '@/lib/ai';
-import { formatShort } from '@/lib/date';
+import { formatShort, todayISO } from '@/lib/date';
 import { ScheduleSuggestions } from '@/components/ScheduleSuggestions';
 import type { Task } from '@/types';
 import { PRIORITY_LABELS } from '@/types';
@@ -10,7 +10,7 @@ import { PRIORITY_LABELS } from '@/types';
 type Tab = 'schedule' | 'decompose' | 'plan' | 'summary';
 
 export function AIPage({ onApplySubtasks }: { onApplySubtasks: (task: Task, subs: string[]) => void }) {
-  const { tasks } = useFlow();
+  const { tasks } = useTasks();
   // Default to the Phase 4D scheduler so Dashboard's「AI 帮我安排」lands on it.
   const [tab, setTab] = useState<Tab>('schedule');
 
@@ -46,7 +46,7 @@ function TabBtn({ active, onClick, icon: Icon, children }: { active: boolean; on
 }
 
 function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, subs: string[]) => void }) {
-  const { tasks, updateTask } = useFlow();
+  const { tasks } = useTasks();
   const [input, setInput] = useState('');
   const [steps, setSteps] = useState<string[] | null>(null);
   const [loading, setLoading] = useState(false);
@@ -158,7 +158,7 @@ function PlanPanel({ tasks }: { tasks: Task[] }) {
     setLoading(true);
     setSlots(null);
     setTimeout(() => {
-      setSlots(aiPlan(tasks));
+      setSlots(aiPlan(tasks, todayISO()));
       setLoading(false);
     }, 600);
   };
@@ -231,7 +231,7 @@ function PlanPanel({ tasks }: { tasks: Task[] }) {
 
 function SummaryPanel({ tasks }: { tasks: Task[] }) {
   const summary = useMemo(() => aiSummary(tasks), [tasks]);
-  const todayTasks = tasks.filter((t) => t.dueDate === new Date().toISOString().slice(0, 10));
+  const todayTasks = tasks.filter((t) => t.dueDate === todayISO());
 
   const toneColor = {
     great: 'from-emerald-400 to-emerald-500',
