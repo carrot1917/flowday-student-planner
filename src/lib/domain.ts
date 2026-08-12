@@ -4,7 +4,7 @@
 // Phase 1 (`courseId`, `estimatedMinutes`). The store is a thin wrapper around
 // these functions so every rule stays unit-testable without React.
 
-import type { AppState, AvailabilitySlot, Course, Tag, Task, Weekday } from '@/types';
+import type { AppState, AvailabilitySlot, Course, ScheduleBlock, Tag, Task, Weekday } from '@/types';
 import { TAG_LABELS, UNCATEGORIZED_COLOR, UNCATEGORIZED_LABEL, COURSE_PALETTE } from '@/types';
 import { minutesToHHMM, safeFromISO } from './date';
 import { uid } from './storage';
@@ -280,12 +280,11 @@ export function totalAvailableMinutes(slots: AvailabilitySlot[] | undefined): nu
 
 // -------------------------------------------------------- ScheduleBlock integrity
 //
-// Phase 0: orphan ScheduleBlock cleanup. A block whose taskId points at a
-// Task that no longer exists is an "orphan". These are silently removed during
-// hydration so the scheduler, conflict detector and calendar never see them.
+// Phase 0: orphan ScheduleBlock cleanup. A block with a taskId that points at
+// a missing Task is an orphan. Task-less placeholder blocks are valid v3 data.
 
 /**
- * Filter out ScheduleBlocks whose taskId does not match any existing Task.
+ * Filter out ScheduleBlocks whose present taskId does not match any existing Task.
  * Pure: returns a new array, never mutates inputs.
  */
 export function sanitizeScheduleBlocks(
@@ -293,7 +292,7 @@ export function sanitizeScheduleBlocks(
   blocks: ScheduleBlock[],
 ): ScheduleBlock[] {
   const active = new Set(tasks.map((t) => t.id));
-  return blocks.filter((b) => active.has(b.taskId));
+  return blocks.filter((b) => !b.taskId || active.has(b.taskId));
 }
 
 // -------------------------------------------------------- Availability normalization

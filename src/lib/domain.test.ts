@@ -41,13 +41,11 @@ function makeTask(id: string, courseId?: string): Task {
     title: 't',
     description: '',
     dueDate: '2026-08-10',
-    startTime: '',
-    endTime: '',
     priority: 'medium',
-    tag: 'other',
     courseId,
     status: 'todo',
     createdAt: 0,
+    updatedAt: 0,
     completedAt: null,
     subtasks: [],
   };
@@ -65,13 +63,13 @@ const EMPTY_AVAILABILITY: WeeklyAvailability = {
 
 function makeState(courses: Course[], tasks: Task[]): AppState {
   return {
-    version: 2,
+    version: 3,
     hasSeededDemo: true,
     courses,
     tasks,
     scheduleBlocks: [],
     availability: { ...EMPTY_AVAILABILITY },
-    settings: { notificationsEnabled: false, reminderTime: 480, dueReminder: true, startOfWeek: 1 },
+    settings: { notificationsEnabled: false, reminderTime: 480, dueReminder: true, startOfWeek: 1, timezone: 'UTC', dailyStudyLimitMinutes: 480, minBlockMinutes: 25, maxBlockMinutes: 120, breakMinutes: 5 },
   };
 }
 
@@ -165,15 +163,15 @@ describe('deleteCourseFromState (no cascade delete)', () => {
   });
 
   it('leaves ScheduleBlocks untouched (they reference taskId, not courseId)', () => {
-    const withBlocks: AppState = { ...state, scheduleBlocks: [{ id: 'sb1', taskId: 't1', date: '2026-08-10', startTime: '08:00', endTime: '09:00', plannedMinutes: 60 }] };
+    const withBlocks: AppState = { ...state, scheduleBlocks: [{ id: 'sb1', taskId: 't1', date: '2026-08-10', startTime: '08:00', endTime: '09:00', plannedMinutes: 60, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 }] };
     const next = deleteCourseFromState(withBlocks, 'c1');
     expect(next.scheduleBlocks).toHaveLength(1);
   });
 
-  it('preserves the legacy tag on tasks (not overwritten on delete)', () => {
-    const withTag = makeState(courses, [{ ...makeTask('t1', 'c1'), tag: 'math' }]);
+  it('keeps task fields intact when clearing a course', () => {
+    const withTag = makeState(courses, [makeTask('t1', 'c1')]);
     const next = deleteCourseFromState(withTag, 'c1');
-    expect(next.tasks[0]?.tag).toBe('math');
+    expect(next.tasks[0]?.title).toBe('t');
   });
 });
 
@@ -397,13 +395,13 @@ describe('AvailabilityPage wiring (source-level)', () => {
 
 describe('sanitizeScheduleBlocks', () => {
   const tasks: Task[] = [
-    { id: 't1', title: 'a', description: '', dueDate: '2026-08-10', startTime: '', endTime: '', priority: 'medium', tag: 'other', status: 'todo', createdAt: 0, completedAt: null, subtasks: [] },
-    { id: 't2', title: 'b', description: '', dueDate: '2026-08-11', startTime: '', endTime: '', priority: 'medium', tag: 'other', status: 'todo', createdAt: 0, completedAt: null, subtasks: [] },
+    { id: 't1', title: 'a', description: '', dueDate: '2026-08-10', priority: 'medium', status: 'todo', createdAt: 0, updatedAt: 0, completedAt: null, subtasks: [] },
+    { id: 't2', title: 'b', description: '', dueDate: '2026-08-11', priority: 'medium', status: 'todo', createdAt: 0, updatedAt: 0, completedAt: null, subtasks: [] },
   ];
   const blocks: ScheduleBlock[] = [
-    { id: 'b1', taskId: 't1', date: '2026-08-10', startTime: '09:00', endTime: '10:00', plannedMinutes: 60 },
-    { id: 'b2', taskId: 't2', date: '2026-08-10', startTime: '10:00', endTime: '11:00', plannedMinutes: 60 },
-    { id: 'b3', taskId: 'ghost', date: '2026-08-10', startTime: '11:00', endTime: '12:00', plannedMinutes: 60 },
+    { id: 'b1', taskId: 't1', date: '2026-08-10', startTime: '09:00', endTime: '10:00', plannedMinutes: 60, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 },
+    { id: 'b2', taskId: 't2', date: '2026-08-10', startTime: '10:00', endTime: '11:00', plannedMinutes: 60, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 },
+    { id: 'b3', taskId: 'ghost', date: '2026-08-10', startTime: '11:00', endTime: '12:00', plannedMinutes: 60, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 },
   ];
 
   it('keeps blocks whose taskId exists', () => {

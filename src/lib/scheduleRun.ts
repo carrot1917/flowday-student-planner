@@ -20,6 +20,8 @@ export interface BuildScheduleInputArgs {
   existingBlocks: ScheduleBlock[];
   /** Injected by the caller (e.g. the current date). Never read here. */
   from: string;
+  /** Injected timestamp used by generated ScheduleBlocks. */
+  generatedAt?: number;
 }
 
 /**
@@ -36,6 +38,7 @@ export function buildScheduleInput(args: BuildScheduleInputArgs): ScheduleInput 
     availability: args.availability,
     existingBlocks: args.existingBlocks,
     from: args.from,
+    generatedAt: args.generatedAt,
     horizonDays: DEFAULT_HORIZON_DAYS,
     // dailyMaxMinutes: undefined — not exposed in v1
     minBlockMinutes: DEFAULT_MIN_BLOCK_MINUTES,

@@ -23,7 +23,7 @@ function mkBlock(
   end: string,
   planned = 60,
 ): ScheduleBlock {
-  return { id, taskId, date, startTime: start, endTime: end, plannedMinutes: planned };
+  return { id, taskId, date, startTime: start, endTime: end, plannedMinutes: planned, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 };
 }
 
 function mkTask(id: string): Task {
@@ -32,12 +32,10 @@ function mkTask(id: string): Task {
     title: `Task ${id}`,
     description: '',
     dueDate: '2026-12-31',
-    startTime: '09:00',
-    endTime: '10:00',
     priority: 'medium',
-    tag: 'other',
     status: 'todo',
     createdAt: 0,
+    updatedAt: 0,
     completedAt: null,
     subtasks: [],
   };

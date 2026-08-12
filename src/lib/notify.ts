@@ -98,6 +98,7 @@ export function restoreReminders(
 ): void {
   clearAllReminders();
   for (const b of blocks) {
+    if (!b.taskId) continue;
     const task = taskById.get(b.taskId);
     if (!task) continue;
     scheduleReminder(b, task.title);

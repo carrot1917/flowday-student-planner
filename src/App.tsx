@@ -8,14 +8,14 @@ import type { Task } from '@/types';
 import { createSubtask } from '@/lib/storage';
 
 // Lazy-loaded pages
-const Dashboard = lazy(() => import('@/pages/Dashboard'));
-const TasksPage = lazy(() => import('@/pages/TasksPage'));
-const KanbanPage = lazy(() => import('@/pages/KanbanPage'));
-const TimelinePage = lazy(() => import('@/pages/TimelinePage'));
-const CalendarPage = lazy(() => import('@/pages/CalendarPage'));
-const AvailabilityPage = lazy(() => import('@/pages/AvailabilityPage'));
-const AIPage = lazy(() => import('@/pages/AIPage'));
-const SettingsPage = lazy(() => import('@/pages/SettingsPage'));
+const Dashboard = lazy(() => import('@/pages/Dashboard').then((m) => ({ default: m.Dashboard })));
+const TasksPage = lazy(() => import('@/pages/TasksPage').then((m) => ({ default: m.TasksPage })));
+const KanbanPage = lazy(() => import('@/pages/KanbanPage').then((m) => ({ default: m.KanbanPage })));
+const TimelinePage = lazy(() => import('@/pages/TimelinePage').then((m) => ({ default: m.TimelinePage })));
+const CalendarPage = lazy(() => import('@/pages/CalendarPage').then((m) => ({ default: m.CalendarPage })));
+const AvailabilityPage = lazy(() => import('@/pages/AvailabilityPage').then((m) => ({ default: m.AvailabilityPage })));
+const AIPage = lazy(() => import('@/pages/AIPage').then((m) => ({ default: m.AIPage })));
+const SettingsPage = lazy(() => import('@/pages/SettingsPage').then((m) => ({ default: m.SettingsPage })));
 
 // Simple hash-based router
 function parseHash(): { page: PageId; params: Record<string, string> } {
@@ -110,7 +110,7 @@ function Router() {
         return <CalendarPage
           onOpenTask={openEdit}
           onAddTaskOnDate={(d) => openAdd(d)}
-          initialView={pageParams.view as any}
+          initialView={pageParams.view}
           initialDate={pageParams.date}
         />;
       case 'availability':

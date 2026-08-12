@@ -46,13 +46,19 @@ export interface PlanSlot {
   priority: string;
 }
 
+type TaskWithDueDate = Task & { dueDate: string };
+
+function hasValidDueDate(task: Task): task is TaskWithDueDate {
+  return typeof task.dueDate === 'string' && safeFromISO(task.dueDate) !== null;
+}
+
 export function aiPlan(tasks: Task[], from: string, days = 7): PlanSlot[] {
   const base = safeFromISO(from);
   if (!base) return [];
 
   // Only plan tasks that are pending AND have a parseable deadline.
   const pending = tasks
-    .filter((t) => t.status !== 'done' && safeFromISO(t.dueDate) !== null)
+    .filter((t): t is TaskWithDueDate => t.status !== 'done' && hasValidDueDate(t))
     .sort((a, b) => {
       const d = fromISO(a.dueDate).getTime() - fromISO(b.dueDate).getTime();
       if (d !== 0) return d;

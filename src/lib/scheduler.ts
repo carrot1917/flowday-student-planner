@@ -113,6 +113,8 @@ export interface ScheduleInput {
   existingBlocks: ScheduleBlock[];
   /** First planning day (YYYY-MM-DD). REQUIRED — the scheduler owns no clock. */
   from: string;
+  /** Timestamp injected by the caller for generated v3 blocks. Defaults to 0 for deterministic legacy callers. */
+  generatedAt?: number;
   /** How many days to plan, starting at `from`. Default 14. */
   horizonDays?: number;
   /** Optional per-day ceiling on study minutes. Default: only availability limits. */
@@ -170,6 +172,7 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
     horizonDays = DEFAULT_HORIZON_DAYS,
     dailyMaxMinutes,
   } = input;
+  const generatedAt = input.generatedAt ?? 0;
 
   const minBlock = sanitizeBlockBound(input.minBlockMinutes, DEFAULT_MIN_BLOCK_MINUTES);
   const maxBlock = Math.max(minBlock, sanitizeBlockBound(input.maxBlockMinutes, DEFAULT_MAX_BLOCK_MINUTES));
@@ -194,7 +197,8 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
       reject(index, { taskId: task.id, remainingMinutes: 0, reason: 'no-estimate' });
       return;
     }
-    if (safeFromISO(task.dueDate) === null) {
+    const dueDate = task.dueDate;
+    if (!dueDate || safeFromISO(dueDate) === null) {
       reject(index, { taskId: task.id, remainingMinutes: estimate, reason: 'invalid-deadline' });
       return;
     }
@@ -205,12 +209,12 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
     const remaining = Math.max(0, estimate - (scheduledByTask.get(task.id) ?? 0));
     if (remaining === 0) return; // already fully planned — nothing to add, nothing to report
 
-    if (horizonUsable && task.dueDate < from) {
+    if (horizonUsable && dueDate < from) {
       reject(index, { taskId: task.id, remainingMinutes: remaining, reason: 'deadline-passed' });
       return;
     }
 
-    candidates.push({ index, id: task.id, dueDate: task.dueDate, remaining });
+    candidates.push({ index, id: task.id, dueDate, remaining });
   });
 
   // ---- 2. urgency order (D9) ------------------------------------------------
@@ -262,6 +266,11 @@ export function generateSchedule(input: ScheduleInput): ScheduleResult {
           startTime,
           endTime: minutesToHHMM(cursor + len),
           plannedMinutes: len,
+          source: 'scheduler',
+          locked: false,
+          status: 'planned',
+          createdAt: generatedAt,
+          updatedAt: generatedAt,
         });
 
         cursor += len;

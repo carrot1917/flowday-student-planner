@@ -22,12 +22,10 @@ function mkTask(id: string, over: Partial<Task> = {}): Task {
     title: `Task ${id}`,
     description: '',
     dueDate: '2026-12-31',
-    startTime: '09:00',
-    endTime: '10:00',
     priority: 'medium',
-    tag: 'other',
     status: 'todo',
     createdAt: 0,
+    updatedAt: 0,
     completedAt: null,
     subtasks: [],
     ...over,
@@ -35,7 +33,7 @@ function mkTask(id: string, over: Partial<Task> = {}): Task {
 }
 
 function b(id: string): ScheduleBlock {
-  return { id, taskId: id, date: '2026-08-10', startTime: '09:00', endTime: '10:00', plannedMinutes: 60 };
+  return { id, taskId: id, date: '2026-08-10', startTime: '09:00', endTime: '10:00', plannedMinutes: 60, source: 'manual', locked: false, status: 'planned', createdAt: 0, updatedAt: 0 };
 }
 
 function availAll(slots: AvailabilitySlot[]): WeeklyAvailability {

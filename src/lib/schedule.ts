@@ -20,6 +20,7 @@ export function groupBlocksByDate(blocks: ScheduleBlock[]): Record<string, Sched
 export function groupTasksByDeadline(tasks: Task[]): Record<string, Task[]> {
   const map: Record<string, Task[]> = {};
   for (const t of tasks) {
+    if (!t.dueDate) continue;
     (map[t.dueDate] ||= []).push(t);
   }
   return map;
@@ -40,6 +41,7 @@ export function sortScheduleBlocks(blocks: ScheduleBlock[]): ScheduleBlock[] {
  * so it can be recovered; we just skip the orphan on screen).
  */
 export function findTaskForBlock(taskById: Map<string, Task>, block: ScheduleBlock): Task | undefined {
+  if (!block.taskId) return undefined;
   return taskById.get(block.taskId);
 }
 
@@ -57,7 +59,7 @@ export type DeadlineBucket = 'overdue' | 'today' | 'tomorrow' | 'thisWeek' | 'la
  * @param weekStartsOn  0 = Sunday, 1 = Monday (matches Settings.startOfWeek)
  */
 export function deadlineBucket(
-  dueDate: string,
+  dueDate: string | undefined,
   today?: string,
   weekStartsOn: 0 | 1 = 1,
 ): DeadlineBucket {
@@ -93,7 +95,7 @@ export function todayDueTasks(tasks: Task[], today: string): Task[] {
  * ISO date strings sort lexicographically, so a plain string compare is correct.
  */
 export function overdueTasks(tasks: Task[], today: string): Task[] {
-  return tasks.filter((t) => t.status !== 'done' && t.dueDate < today);
+  return tasks.filter((t) => t.status !== 'done' && !!t.dueDate && t.dueDate < today);
 }
 
 /**

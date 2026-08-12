@@ -41,7 +41,12 @@ export function TasksPage({ onOpenTask }: TasksPageProps) {
       return true;
     });
     list = [...list].sort((a, b) => {
-      if (sort === 'due') return a.dueDate.localeCompare(b.dueDate);
+      if (sort === 'due') {
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return a.dueDate.localeCompare(b.dueDate);
+      }
       if (sort === 'priority') return PRIORITY_ORDER[a.priority] - PRIORITY_ORDER[b.priority];
       return b.createdAt - a.createdAt;
     });

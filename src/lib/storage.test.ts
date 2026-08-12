@@ -19,6 +19,7 @@ import {
   deepValidateState,
 } from './storage';
 import type { AppState, ScheduleBlock, Task, WeeklyAvailability } from '@/types';
+import type { LegacyTaskV1, V2AppState, V2Settings } from './storage';
 
 function clearStorage() {
   localStorage.clear();
@@ -28,7 +29,7 @@ const EMPTY_AVAILABILITY: WeeklyAvailability = {
   monday: [], tuesday: [], wednesday: [], thursday: [], friday: [], saturday: [], sunday: [],
 };
 
-function v1State(tasks: Task[], settings?: Partial<AppState['settings']>) {
+function v1State(tasks: LegacyTaskV1[], settings?: Partial<V2Settings>) {
   return {
     tasks,
     settings: {
@@ -41,7 +42,7 @@ function v1State(tasks: Task[], settings?: Partial<AppState['settings']>) {
   };
 }
 
-function legacyTask(over: Partial<Task> = {}): Task {
+function legacyTask(over: Partial<LegacyTaskV1> = {}): LegacyTaskV1 {
   return {
     id: 't1',
     title: '旧任务',
@@ -56,7 +57,20 @@ function legacyTask(over: Partial<Task> = {}): Task {
     completedAt: null,
     subtasks: [],
     ...over,
-  } as any;
+  };
+}
+
+function v2State(over: Partial<V2AppState> = {}): V2AppState {
+  return {
+    version: 2,
+    hasSeededDemo: true,
+    courses: [],
+    tasks: [],
+    scheduleBlocks: [],
+    availability: EMPTY_AVAILABILITY,
+    settings: { notificationsEnabled: false, reminderTime: 480, dueReminder: true, startOfWeek: 1 },
+    ...over,
+  };
 }
 
 function v3State(over: Partial<AppState> = {}): AppState {

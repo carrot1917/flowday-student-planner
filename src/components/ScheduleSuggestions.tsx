@@ -42,6 +42,7 @@ export function ScheduleSuggestions() {
       availability,
       existingBlocks: scheduleBlocks,
       from: todayISO(),
+      generatedAt: Date.now(),
     });
     setResult(generateSchedule(input));
     setConfirmedCount(0);
@@ -199,7 +200,7 @@ export function ScheduleSuggestions() {
                           {b.startTime}–{b.endTime}
                         </span>
                         <span className="flex-1 truncate text-xs text-ink-700">
-                          {taskById.get(b.taskId)?.title ?? '未知任务'}
+                          {b.taskId ? taskById.get(b.taskId)?.title ?? '未知任务' : '未关联任务'}
                         </span>
                         <span className="text-[11px] text-ink-400">{b.plannedMinutes}′</span>
                       </div>

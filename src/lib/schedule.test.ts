@@ -23,12 +23,10 @@ const makeTask = (id: string, dueDate: string): Task => ({
   dueDate,
   // legacy scheduling fields are intentionally present (kept for migration)
   // but must NOT drive the calendar — only dueDate is used for deadlines.
-  startTime: '09:00',
-  endTime: '10:00',
   priority: 'medium',
-  tag: 'other',
   status: 'todo',
   createdAt: 0,
+  updatedAt: 0,
   completedAt: null,
   subtasks: [],
   estimatedMinutes: 30,
@@ -47,6 +45,11 @@ const makeBlock = (
   startTime: start,
   endTime: end,
   plannedMinutes: 60,
+  source: 'manual',
+  locked: false,
+  status: 'planned',
+  createdAt: 0,
+  updatedAt: 0,
 });
 
 describe('schedule domain', () => {

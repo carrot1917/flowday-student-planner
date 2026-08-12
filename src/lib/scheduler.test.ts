@@ -26,12 +26,10 @@ function makeTask(id: string, over: Partial<Task> = {}): Task {
     description: '',
     dueDate: WED,
     // legacy scheduling fields must never influence the scheduler
-    startTime: '08:00',
-    endTime: '09:00',
     priority: 'medium',
-    tag: 'other',
     status: 'todo',
     createdAt: 0,
+    updatedAt: 0,
     completedAt: null,
     subtasks: [],
     estimatedMinutes: 60,
@@ -53,6 +51,11 @@ function makeBlock(
     startTime,
     endTime,
     plannedMinutes: plannedMinutes ?? 0,
+    source: 'manual',
+    locked: false,
+    status: 'planned',
+    createdAt: 0,
+    updatedAt: 0,
   };
 }
 

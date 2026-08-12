@@ -48,7 +48,12 @@ export function TimelinePage({ onOpenTask, onAddTaskOnDate }: TimelinePageProps)
     }
     // Earliest deadline first within each group.
     (Object.keys(groups) as DeadlineBucket[]).forEach((k) =>
-      groups[k].sort((a, b) => a.dueDate.localeCompare(b.dueDate)),
+      groups[k].sort((a, b) => {
+        if (!a.dueDate && !b.dueDate) return 0;
+        if (!a.dueDate) return 1;
+        if (!b.dueDate) return -1;
+        return a.dueDate.localeCompare(b.dueDate);
+      }),
     );
     return groups;
   }, [tasks, settings.startOfWeek]);

@@ -20,7 +20,7 @@ export function fromISO(s: string): Date {
  * Shared by every layer that must not trust a stored date string
  * (deadline bucketing, the scheduler horizon, weekday lookup).
  */
-export function safeFromISO(s: string): Date | null {
+export function safeFromISO(s: string | undefined | null): Date | null {
   if (typeof s !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(s)) return null;
   const d = fromISO(s);
   if (Number.isNaN(d.getTime())) return null;
@@ -83,9 +83,11 @@ export function formatShort(s: string): string {
   return `${d.getMonth() + 1}月${d.getDate()}日`;
 }
 
-export function relativeDue(s: string): { label: string; tone: 'overdue' | 'today' | 'soon' | 'later' } {
+export function relativeDue(s: string | undefined | null): { label: string; tone: 'overdue' | 'today' | 'soon' | 'later' } {
+  if (!s) return { label: '无截止日期', tone: 'later' };
   const today = new Date();
-  const due = fromISO(s);
+  const due = safeFromISO(s);
+  if (!due) return { label: '日期无效', tone: 'later' };
   const diff = diffDays(due, today);
   if (diff < 0) return { label: `逾期 ${-diff} 天`, tone: 'overdue' };
   if (diff === 0) return { label: '今天', tone: 'today' };

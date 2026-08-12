@@ -17,6 +17,53 @@ export const STORAGE_KEY_V3 = 'flowday.state.v3';
 export const STORAGE_KEY_V3_CORRUPT = 'flowday.state.v3.corrupt';
 export const STORAGE_VERSION = 3;
 
+export interface LegacyTaskV1 {
+  id: string;
+  title: string;
+  description?: string;
+  dueDate?: string;
+  startTime?: string;
+  endTime?: string;
+  tag?: Tag;
+  priority?: Task['priority'];
+  status?: Task['status'];
+  createdAt?: number;
+  completedAt?: number | null;
+  subtasks?: Subtask[];
+  estimatedMinutes?: number;
+}
+
+export interface V2Task extends LegacyTaskV1 {
+  courseId?: string;
+  updatedAt?: number;
+}
+
+export interface V2ScheduleBlock {
+  id: string;
+  taskId?: string;
+  date: string;
+  startTime: string;
+  endTime: string;
+  plannedMinutes: number;
+}
+
+export interface V2Settings {
+  notificationsEnabled?: boolean;
+  reminderTime?: number;
+  dueReminder?: boolean;
+  startOfWeek?: 0 | 1;
+}
+
+export interface V2AppState {
+  version: 2;
+  hasSeededDemo?: boolean;
+  courses: Course[];
+  tasks: V2Task[];
+  scheduleBlocks: V2ScheduleBlock[];
+  availability: WeeklyAvailability;
+  settings: V2Settings;
+}
+
 const DEFAULT_SETTINGS: Settings = {
   notificationsEnabled: false,
   reminderTime: 8 * 60, // 08:00
@@ -104,6 +151,12 @@ export function deepValidateTask(raw: unknown): ValidationResult {
     const v = parseIntOrUndefined(raw.estimatedMinutes);
     if (v === undefined) errors.push('Task.estimatedMinutes 无效');
   }
+  if (!isString(raw.description)) errors.push('Task.description is required');
+  if (!['high', 'medium', 'low'].includes(raw.priority as string)) errors.push('Task.priority is required');
+  if (!['todo', 'doing', 'done'].includes(raw.status as string)) errors.push('Task.status is required');
+  if (!isNumber(raw.createdAt)) errors.push('Task.createdAt is required');
+  if (!isNumber(raw.updatedAt)) errors.push('Task.updatedAt is required');
+  if (!Array.isArray(raw.subtasks)) errors.push('Task.subtasks is required');
   return { ok: errors.length === 0, errors };
 }
 
@@ -118,6 +171,12 @@ export function deepValidateScheduleBlock(raw: unknown): ValidationResult {
   if (raw.source !== undefined && !['manual', 'scheduler', 'external'].includes(raw.source as string)) errors.push('ScheduleBlock.source 无效');
   if (raw.locked !== undefined && !isBoolean(raw.locked)) errors.push('ScheduleBlock.locked 类型错误');
   if (raw.status !== undefined && !['planned', 'done', 'skipped'].includes(raw.status as string)) errors.push('ScheduleBlock.status 无效');
+  if (!isNumber(raw.plannedMinutes)) errors.push('ScheduleBlock.plannedMinutes is required');
+  if (raw.source === undefined) errors.push('ScheduleBlock.source is required');
+  if (raw.locked === undefined) errors.push('ScheduleBlock.locked is required');
+  if (raw.status === undefined) errors.push('ScheduleBlock.status is required');
+  if (!isNumber(raw.createdAt)) errors.push('ScheduleBlock.createdAt is required');
+  if (!isNumber(raw.updatedAt)) errors.push('ScheduleBlock.updatedAt is required');
   return { ok: errors.length === 0, errors };
 }
 
@@ -133,11 +192,21 @@ export function deepValidateSettings(raw: unknown): ValidationResult {
   if (raw.minBlockMinutes !== undefined && !isNumber(raw.minBlockMinutes)) errors.push('Settings.minBlockMinutes 类型错误');
   if (raw.maxBlockMinutes !== undefined && !isNumber(raw.maxBlockMinutes)) errors.push('Settings.maxBlockMinutes 类型错误');
   if (raw.breakMinutes !== undefined && !isNumber(raw.breakMinutes)) errors.push('Settings.breakMinutes 类型错误');
+  if (!isBoolean(raw.notificationsEnabled)) errors.push('Settings.notificationsEnabled is required');
+  if (!isNumber(raw.reminderTime)) errors.push('Settings.reminderTime is required');
+  if (!isBoolean(raw.dueReminder)) errors.push('Settings.dueReminder is required');
+  if (![0, 1].includes(raw.startOfWeek as number)) errors.push('Settings.startOfWeek is required');
+  if (!isString(raw.timezone)) errors.push('Settings.timezone is required');
+  if (!isNumber(raw.dailyStudyLimitMinutes)) errors.push('Settings.dailyStudyLimitMinutes is required');
+  if (!isNumber(raw.minBlockMinutes)) errors.push('Settings.minBlockMinutes is required');
+  if (!isNumber(raw.maxBlockMinutes)) errors.push('Settings.maxBlockMinutes is required');
+  if (!isNumber(raw.breakMinutes)) errors.push('Settings.breakMinutes is required');
   return { ok: errors.length === 0, errors };
 }
 
 export function deepValidateState(raw: unknown): ValidationResult {
   const errors: string[] = [];
+  if (isObject(raw) && !isBoolean(raw.hasSeededDemo)) errors.push('AppState.hasSeededDemo is required');
   if (!isObject(raw)) return { ok: false, errors: ['AppState 不是对象'] };
   if (raw.version !== 3) errors.push(`AppState.version 不是 3（实际=${raw.version}）`);
   if (raw.hasSeededDemo !== undefined && !isBoolean(raw.hasSeededDemo)) errors.push('AppState.hasSeededDemo 类型错误');
@@ -179,18 +248,10 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 function isValidV3(v: unknown): v is AppState {
-  if (!isPlainObject(v)) return false;
-  if (v.version !== 3) return false;
-  return (
-    Array.isArray(v.tasks) &&
-    Array.isArray(v.courses) &&
-    Array.isArray(v.scheduleBlocks) &&
-    isPlainObject(v.availability) &&
-    isPlainObject(v.settings)
-  );
+  return deepValidateState(v).ok;
 }
 
-function isValidV2(v: unknown): v is AppState {
+function isValidV2(v: unknown): v is V2AppState {
   if (!isPlainObject(v)) return false;
   if (v.version !== 2) return false;
   return (
@@ -248,34 +309,33 @@ function emptyState(): AppState {
  * If a v2 Task has startTime/endTime and they don't already have a corresponding
  * ScheduleBlock, migrate them into one (idempotent via deterministic block ID).
  */
-export function migrateV2ToV3(v2: AppState): { state: AppState; report: MigrationReport } {
+export function migrateV2ToV3(v2: V2AppState): { state: AppState; report: MigrationReport } {
   const now = Date.now();
   const existingBlockIds = new Set(v2.scheduleBlocks.map((b) => b.id));
   const migratedBlocks: ScheduleBlock[] = v2.scheduleBlocks.map((b) => ({
     ...b,
-    source: (b as any).source ?? 'manual' as const,
-    locked: (b as any).locked ?? false,
-    status: (b as any).status ?? 'planned' as const,
-    createdAt: (b as any).createdAt ?? now,
-    updatedAt: (b as any).updatedAt ?? now,
+    source: 'manual',
+    locked: false,
+    status: 'planned',
+    createdAt: now,
+    updatedAt: now,
   }));
 
   // Collect legacy Task startTime/endTime that haven't been migrated yet
   const newBlocks: ScheduleBlock[] = [];
   for (const t of v2.tasks) {
-    const oldTask = t as any;
-    if (oldTask.startTime && oldTask.endTime && oldTask.dueDate) {
-      const blockId = `sb:v2migrate:${t.id}:${oldTask.dueDate}:${oldTask.startTime}`;
+    if (t.startTime && t.endTime && t.dueDate) {
+      const blockId = `sb:v2migrate:${t.id}:${t.dueDate}:${t.startTime}`;
       if (!existingBlockIds.has(blockId) && !migratedBlocks.some((b) => b.id === blockId)) {
-        const start = hhmmToMinutes(oldTask.startTime);
-        const end = hhmmToMinutes(oldTask.endTime);
+        const start = hhmmToMinutes(t.startTime);
+        const end = hhmmToMinutes(t.endTime);
         if (end > start) {
           newBlocks.push({
             id: blockId,
             taskId: t.id,
-            date: oldTask.dueDate,
-            startTime: oldTask.startTime,
-            endTime: oldTask.endTime,
+            date: t.dueDate,
+            startTime: t.startTime,
+            endTime: t.endTime,
             plannedMinutes: end - start,
             source: 'manual' as const,
             locked: false,
@@ -289,20 +349,19 @@ export function migrateV2ToV3(v2: AppState): { state: AppState; report: Migratio
   }
 
   const tasks: Task[] = v2.tasks.map((t) => {
-    const old = t as any;
     return {
       id: t.id,
       title: t.title,
-      description: t.description,
+      description: t.description ?? '',
       courseId: t.courseId,
-      priority: t.priority,
-      status: t.status,
+      priority: t.priority ?? 'medium',
+      status: t.status ?? 'todo',
       dueDate: t.dueDate,
       estimatedMinutes: t.estimatedMinutes,
-      createdAt: t.createdAt,
-      updatedAt: old.updatedAt ?? now,
+      createdAt: t.createdAt ?? now,
+      updatedAt: t.updatedAt ?? now,
       completedAt: t.completedAt,
-      subtasks: t.subtasks,
+      subtasks: t.subtasks ?? [],
     };
   });
 
@@ -313,7 +372,7 @@ export function migrateV2ToV3(v2: AppState): { state: AppState; report: Migratio
 
   const state: AppState = {
     version: 3,
-    hasSeededDemo: v2.hasSeededDemo,
+    hasSeededDemo: v2.hasSeededDemo ?? true,
     courses: v2.courses,
     tasks,
     scheduleBlocks: [...migratedBlocks, ...newBlocks],
@@ -328,14 +387,14 @@ export function migrateV2ToV3(v2: AppState): { state: AppState; report: Migratio
  * Migrate a legacy v1 state into the v2 schema, then v2→v3.
  */
 export function migrateV1ToV2(v1: { tasks?: unknown; settings?: unknown }): AppState {
-  const rawTasks = Array.isArray(v1.tasks) ? (v1.tasks as Task[]) : [];
+  const rawTasks = Array.isArray(v1.tasks) ? (v1.tasks as LegacyTaskV1[]) : [];
   const settings: Settings = {
     ...DEFAULT_SETTINGS,
     ...(isPlainObject(v1.settings) ? (v1.settings as Partial<Settings>) : {}),
   };
 
   const present = new Set<Tag>();
-  for (const t of rawTasks) if (t && t.tag) present.add(t.tag as Tag);
+  for (const t of rawTasks) if (t.tag) present.add(t.tag);
 
   const courses: Course[] = [];
   const tagToCourseId = new Map<Tag, string>();
@@ -349,19 +408,18 @@ export function migrateV1ToV2(v1: { tasks?: unknown; settings?: unknown }): AppS
   const scheduleBlocks: ScheduleBlock[] = [];
   const now = Date.now();
   const tasks: Task[] = rawTasks.map((t) => {
-    const task = t as any;
-    const courseId = task.tag ? tagToCourseId.get(task.tag as Tag) : undefined;
+    const courseId = t.tag ? tagToCourseId.get(t.tag) : undefined;
 
-    if (task.startTime && task.endTime && task.dueDate) {
-      const start = hhmmToMinutes(task.startTime);
-      const end = hhmmToMinutes(task.endTime);
+    if (t.startTime && t.endTime && t.dueDate) {
+      const start = hhmmToMinutes(t.startTime);
+      const end = hhmmToMinutes(t.endTime);
       if (end > start) {
         scheduleBlocks.push({
-          id: `sb:${task.id}:${task.dueDate}:${task.startTime}`,
-          taskId: task.id,
-          date: task.dueDate,
-          startTime: task.startTime,
-          endTime: task.endTime,
+          id: `sb:${t.id}:${t.dueDate}:${t.startTime}`,
+          taskId: t.id,
+          date: t.dueDate,
+          startTime: t.startTime,
+          endTime: t.endTime,
           plannedMinutes: end - start,
           source: 'manual' as const,
           locked: false,
@@ -373,18 +431,18 @@ export function migrateV1ToV2(v1: { tasks?: unknown; settings?: unknown }): AppS
     }
 
     return {
-      id: task.id,
-      title: task.title,
-      description: task.description,
+      id: t.id,
+      title: t.title,
+      description: t.description ?? '',
       courseId,
-      priority: task.priority,
-      status: task.status,
-      dueDate: task.dueDate,
-      estimatedMinutes: task.estimatedMinutes ?? undefined,
-      createdAt: task.createdAt,
-      updatedAt: task.updatedAt ?? now,
-      completedAt: task.completedAt ?? null,
-      subtasks: task.subtasks ?? [],
+      priority: t.priority ?? 'medium',
+      status: t.status ?? 'todo',
+      dueDate: t.dueDate,
+      estimatedMinutes: t.estimatedMinutes,
+      createdAt: t.createdAt ?? now,
+      updatedAt: now,
+      completedAt: t.completedAt ?? null,
+      subtasks: t.subtasks ?? [],
     };
   });
 
