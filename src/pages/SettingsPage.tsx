@@ -1,10 +1,11 @@
-import { Bell, BellOff, Clock, Check, GraduationCap, Pencil, Plus, Trash2, X, CircleAlert } from 'lucide-react';
-import { useSettings, useCourses, useTasks, useActions } from '@/store';
+import { Bell, BellOff, Clock, Check, GraduationCap, Pencil, Plus, Trash2, X, CircleAlert, Download, Upload, Timer, Sun, Moon } from 'lucide-react';
+import { useSettings, useCourses, useTasks, useScheduleBlocks, useAvailability, useActions } from '@/store';
 import { notificationsSupported, requestPermission } from '@/lib/notify';
 import { minutesToHHMM } from '@/lib/date';
 import { suggestCourseColor } from '@/lib/domain';
 import { COURSE_PALETTE, UNCATEGORIZED_LABEL } from '@/types';
-import { useMemo, useState } from 'react';
+import { useMemo, useRef, useState } from 'react';
+import { exportBackup, validateBackup, saveState } from '@/lib/storage';
 
 export function SettingsPage() {
   const { settings } = useSettings();
@@ -102,6 +103,128 @@ export function SettingsPage() {
         </div>
       </div>
 
+      {/* Phase 1: Scheduling preferences */}
+      <div className="rounded-[24px] border border-brand-100 bg-white/70 p-5">
+        <div className="flex items-center gap-2">
+          <Timer className="h-5 w-5 text-brand-500" />
+          <p className="text-sm font-bold text-ink-900">学习设置</p>
+        </div>
+        <p className="mt-1 text-xs text-ink-400">设置每周开始日、每日学习时长上限和默认学习时段参数</p>
+        <div className="mt-4 space-y-4">
+          {/* Week starts on */}
+          <div className="flex items-center justify-between">
+            <span className="flex items-center gap-2 text-sm text-ink-600">
+              {settings.startOfWeek === 0 ? <Sun className="h-4 w-4" /> : <Moon className="h-4 w-4" />}
+              每周开始于
+            </span>
+            <div className="flex rounded-xl border border-brand-100 bg-white p-0.5">
+              <button
+                onClick={() => updateSettings({ startOfWeek: 1 })}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  settings.startOfWeek === 1 ? 'bg-brand-500 text-white' : 'text-ink-500 hover:bg-brand-50'
+                }`}
+              >
+                周一
+              </button>
+              <button
+                onClick={() => updateSettings({ startOfWeek: 0 })}
+                className={`rounded-lg px-3 py-1.5 text-xs font-medium transition ${
+                  settings.startOfWeek === 0 ? 'bg-brand-500 text-white' : 'text-ink-500 hover:bg-brand-50'
+                }`}
+              >
+                周日
+              </button>
+            </div>
+          </div>
+
+          {/* Timezone */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-ink-600">时区</span>
+            <span className="text-sm text-ink-900">{settings.timezone}</span>
+          </div>
+
+          {/* Daily study limit */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-ink-600">每日学习时长上限</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={60}
+                max={1440}
+                step={30}
+                value={settings.dailyStudyLimitMinutes}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 0) updateSettings({ dailyStudyLimitMinutes: v });
+                }}
+                className="w-20 rounded-xl border border-brand-100 bg-white/70 px-3 py-1.5 text-sm text-right outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-200"
+              />
+              <span className="text-xs text-ink-400">分钟/天</span>
+            </div>
+          </div>
+
+          {/* Min block duration */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-ink-600">最短学习时段</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={5}
+                max={120}
+                step={5}
+                value={settings.minBlockMinutes}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 0) updateSettings({ minBlockMinutes: v });
+                }}
+                className="w-20 rounded-xl border border-brand-100 bg-white/70 px-3 py-1.5 text-sm text-right outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-200"
+              />
+              <span className="text-xs text-ink-400">分钟</span>
+            </div>
+          </div>
+
+          {/* Max block duration */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-ink-600">最长学习时段</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={30}
+                max={480}
+                step={15}
+                value={settings.maxBlockMinutes}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 0) updateSettings({ maxBlockMinutes: v });
+                }}
+                className="w-20 rounded-xl border border-brand-100 bg-white/70 px-3 py-1.5 text-sm text-right outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-200"
+              />
+              <span className="text-xs text-ink-400">分钟</span>
+            </div>
+          </div>
+
+          {/* Break duration */}
+          <div className="flex items-center justify-between">
+            <span className="text-sm text-ink-600">休息时长</span>
+            <div className="flex items-center gap-2">
+              <input
+                type="number"
+                min={0}
+                max={60}
+                step={5}
+                value={settings.breakMinutes}
+                onChange={(e) => {
+                  const v = parseInt(e.target.value, 10);
+                  if (!isNaN(v) && v >= 0) updateSettings({ breakMinutes: v });
+                }}
+                className="w-20 rounded-xl border border-brand-100 bg-white/70 px-3 py-1.5 text-sm text-right outline-none focus:border-brand-400 focus:ring-2 focus:ring-brand-200"
+              />
+              <span className="text-xs text-ink-400">分钟</span>
+            </div>
+          </div>
+        </div>
+      </div>
+
       {/* Test */}
       <div className="rounded-[24px] border border-brand-100 bg-white/70 p-5">
         <p className="text-sm font-bold text-ink-900">测试提醒</p>
@@ -118,9 +241,127 @@ export function SettingsPage() {
         </button>
       </div>
 
+      {/* Backup / Restore */}
+      <div className="rounded-[24px] border border-brand-100 bg-white/70 p-5">
+        <div className="flex items-center gap-2">
+          <Download className="h-5 w-5 text-brand-500" />
+          <p className="text-sm font-bold text-ink-900">数据备份与恢复</p>
+        </div>
+        <p className="mt-1 text-xs text-ink-400">导出完整数据到本地文件，或从备份文件恢复数据</p>
+        <div className="mt-4 flex flex-wrap gap-2">
+          <ExportButton />
+          <ImportButton />
+        </div>
+      </div>
+
       <p className="px-2 text-center text-xs text-ink-400">
         FlowDay · 数据保存在你的浏览器中，不会上传到任何服务器
       </p>
+    </div>
+  );
+}
+
+function ExportButton() {
+  const { tasks } = useTasks();
+  const { courses } = useCourses();
+  const { scheduleBlocks } = useScheduleBlocks();
+  const { availability } = useAvailability();
+  const { settings } = useSettings();
+
+  const handleExport = () => {
+    const state = {
+      version: 3 as const,
+      hasSeededDemo: true,
+      courses,
+      tasks,
+      scheduleBlocks,
+      availability,
+      settings,
+    };
+    const json = exportBackup(state);
+    const blob = new Blob([json], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    const date = new Date().toISOString().slice(0, 10);
+    a.download = `flowday-backup-${date}.json`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  return (
+    <button
+      onClick={handleExport}
+      className="flex items-center gap-1.5 rounded-2xl bg-brand-50 px-4 py-2 text-sm font-semibold text-brand-600 transition hover:bg-brand-100"
+    >
+      <Download className="h-4 w-4" /> 导出备份
+    </button>
+  );
+}
+
+function ImportButton() {
+  const fileRef = useRef<HTMLInputElement>(null);
+  const [importMsg, setImportMsg] = useState<string | null>(null);
+  const [importOk, setImportOk] = useState(false);
+
+  const handleFile = (e: React.ChangeEvent<HTMLInputElement>) => {
+    setImportMsg(null);
+    setImportOk(false);
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = () => {
+      const text = reader.result as string;
+      const result = validateBackup(text);
+      if (!result.ok) {
+        setImportMsg(result.message);
+        setImportOk(false);
+        return;
+      }
+
+      // Validation passed — ask user to confirm before replacing
+      const confirmed = window.confirm(
+        '即将用备份数据替换当前所有数据。\n当前数据将被覆盖，此操作不可撤销。\n确定要继续吗？',
+      );
+      if (!confirmed) {
+        setImportMsg('已取消导入');
+        setImportOk(false);
+        return;
+      }
+
+      // Write and reload — the hydration pipeline runs on boot
+      saveState(result.state);
+      setImportMsg('备份已恢复，页面即将刷新…');
+      setImportOk(true);
+      setTimeout(() => window.location.reload(), 800);
+    };
+    reader.readAsText(file);
+
+    // Reset file input so the same file can be selected again
+    e.target.value = '';
+  };
+
+  return (
+    <div>
+      <input
+        ref={fileRef}
+        type="file"
+        accept=".json"
+        onChange={handleFile}
+        className="hidden"
+      />
+      <button
+        onClick={() => fileRef.current?.click()}
+        className="flex items-center gap-1.5 rounded-2xl border border-brand-100 bg-white px-4 py-2 text-sm font-semibold text-ink-600 transition hover:bg-brand-50"
+      >
+        <Upload className="h-4 w-4" /> 导入备份
+      </button>
+      {importMsg && (
+        <p className={`mt-2 flex items-center gap-1 text-xs ${importOk ? 'text-emerald-600' : 'text-rose-500'}`}>
+          <CircleAlert className="h-3 w-3" /> {importMsg}
+        </p>
+      )}
     </div>
   );
 }

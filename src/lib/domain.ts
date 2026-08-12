@@ -6,7 +6,7 @@
 
 import type { AppState, AvailabilitySlot, Course, Tag, Task, Weekday } from '@/types';
 import { TAG_LABELS, UNCATEGORIZED_COLOR, UNCATEGORIZED_LABEL, COURSE_PALETTE } from '@/types';
-import { safeFromISO } from './date';
+import { minutesToHHMM, safeFromISO } from './date';
 import { uid } from './storage';
 
 // ---------------------------------------------------------------- Course name
@@ -278,24 +278,98 @@ export function totalAvailableMinutes(slots: AvailabilitySlot[] | undefined): nu
   return slots.reduce((sum, s) => sum + slotMinutes(s), 0);
 }
 
-// ------------------------------------------------------------- legacy compat
-
-const NAME_TO_TAG = new Map<string, Tag>(
-  (Object.keys(TAG_LABELS) as Tag[]).map((t) => [TAG_LABELS[t], t]),
-);
+// -------------------------------------------------------- ScheduleBlock integrity
+//
+// Phase 0: orphan ScheduleBlock cleanup. A block whose taskId points at a
+// Task that no longer exists is an "orphan". These are silently removed during
+// hydration so the scheduler, conflict detector and calendar never see them.
 
 /**
- * COMPATIBILITY SHIM — do not build new features on this.
- *
- * `Task.tag` is a required legacy field. Phase 2 stops exposing it in the UI,
- * but the type (and any Phase 3 page still reading it) still needs a value.
- * We derive it from the course name only when it maps 1:1 onto a legacy
- * category; anything else falls back to 'other'. A Course is NEVER reduced to
- * a tag anywhere else in the codebase.
- *
- * @deprecated Removed in Phase 3 together with `Task.tag`.
+ * Filter out ScheduleBlocks whose taskId does not match any existing Task.
+ * Pure: returns a new array, never mutates inputs.
  */
+export function sanitizeScheduleBlocks(
+  tasks: Task[],
+  blocks: ScheduleBlock[],
+): ScheduleBlock[] {
+  const active = new Set(tasks.map((t) => t.id));
+  return blocks.filter((b) => active.has(b.taskId));
+}
+
+// -------------------------------------------------------- Availability normalization
+//
+// Phase 0: before scheduling (or at any write boundary), availability slots
+// go through this pipeline so the scheduler and conflict detector see only
+// clean, non-overlapping, sorted intervals.
+
+/**
+ * Normalize a day's availability slots:
+ *  - reject invalid slots (malformed time, start >= end)
+ *  - sort by startTime
+ *  - merge overlapping AND adjacent (end === next start) intervals
+ *  - deduplicate identical intervals
+ *  - return a fresh, clean array
+ */
+export function normalizeAvailability(slots: AvailabilitySlot[]): AvailabilitySlot[] {
+  // 1. Filter valid, parse to minutes for comparison
+  type SlotMins = { start: number; end: number; startStr: string; endStr: string };
+  const valid: SlotMins[] = [];
+  for (const s of slots) {
+    const start = parseHHMM(s.startTime);
+    const end = parseHHMM(s.endTime);
+    if (start === null || end === null || end <= start) continue;
+    valid.push({ start, end, startStr: s.startTime, endStr: s.endTime });
+  }
+
+  // 2. Sort by start, then end
+  valid.sort((a, b) => a.start - b.start || a.end - b.end);
+
+  // 3. Merge overlapping and adjacent (end >= next start)
+  const merged: SlotMins[] = [];
+  for (const s of valid) {
+    const last = merged[merged.length - 1];
+    if (last && s.start <= last.end) {
+      // Overlap OR adjacent: extend the last interval if this one ends later
+      if (s.end > last.end) {
+        last.end = s.end;
+        last.endStr = s.endStr;
+      }
+    } else {
+      merged.push({ ...s });
+    }
+  }
+
+  // 4. Convert back to HH:mm strings
+  return merged.map((m) => ({
+    startTime: minutesToHHMM(m.start),
+    endTime: minutesToHHMM(m.end),
+  }));
+}
+
+// -------------------------------------------------------- Week start helper
+
+/**
+ * Extract the numeric weekStartsOn from Settings.
+ * 0 = Sunday, 1 = Monday.
+ * Centralised so changing the Settings type never requires hunting for
+ * scattered `settings.startOfWeek` accesses.
+ */
+export function getWeekStartsOn(settings: { startOfWeek: 0 | 1 }): 0 | 1 {
+  return settings.startOfWeek;
+}
+
+// Phase 1 (v3) — Task.tag no longer exists in the schema.
+// This shim is kept so migration code and tests can still map course names
+// back to their legacy tag identifier (used only in v2→v3 conversion flow).
+const NAME_TO_TAG: Record<string, Tag> = {
+  '数学': 'math',
+  '英语': 'english',
+  '编程': 'coding',
+  '阅读': 'reading',
+  '其他': 'other',
+};
+
 export function legacyTagForCourseName(name: string | undefined): Tag {
   if (!name) return 'other';
-  return NAME_TO_TAG.get(normalizeCourseName(name)) ?? 'other';
+  return NAME_TO_TAG[name] ?? 'other';
 }

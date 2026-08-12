@@ -15,21 +15,18 @@ import {
   courseMap,
   createCourse,
   deleteCourseFromState,
+  normalizeAvailability,
   normalizeCourseColor,
   updateCourseInState,
   validateCourseName,
 } from '@/lib/domain';
-import { startReminderEngine } from '@/lib/notify';
+import { startReminderEngine, cancelRemindersByTask } from '@/lib/notify';
 import { mergeScheduleBlocks } from '@/lib/scheduleRun';
+import { repository } from '@/lib/repository';
 
 export type CourseResult = { ok: true; course: Course } | { ok: false; message: string };
 
 // ----------------------------------------------------------------- Slice types
-//
-// The store is split into independent Contexts so a component that only reads
-// `settings` doesn't re-render when `tasks` changes. The Actions slice is
-// stable (useMemo deps: []) — every action uses either `setState(updater)` or
-// `stateRef.current`, so it never needs to be recreated.
 
 interface TasksSlice {
   tasks: Task[];
@@ -56,13 +53,17 @@ interface ActionsSlice {
   setStatus: (id: string, status: Task['status']) => void;
   addCourse: (name: string, color: string) => CourseResult;
   updateCourse: (id: string, patch: { name?: string; color?: string }) => CourseResult;
-  /** Deletes the course only. Its tasks stay and become '未分类'. */
   deleteCourse: (id: string) => void;
-  /** Replaces ONE weekday's slots. Every other weekday is left untouched. */
   updateAvailability: (day: Weekday, slots: AvailabilitySlot[]) => void;
   updateSettings: (patch: Partial<Settings>) => void;
-  /** Appends scheduler suggestions to the user's blocks (id-deduplicated). */
   addScheduleBlocks: (blocks: ScheduleBlock[]) => void;
+  // Phase 1: full ScheduleBlock lifecycle
+  addScheduleBlock: (block: ScheduleBlock) => void;
+  updateScheduleBlock: (id: string, patch: Partial<ScheduleBlock>) => void;
+  deleteScheduleBlock: (id: string) => void;
+  moveScheduleBlock: (id: string, date: string, startTime: string, endTime: string) => void;
+  resizeScheduleBlock: (id: string, endTime: string) => void;
+  lockScheduleBlock: (id: string, locked: boolean) => void;
 }
 
 // ----------------------------------------------------------------- Contexts
@@ -78,27 +79,31 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   const [initial] = useState(loadState);
   const [state, setState] = useState<AppState>(initial.state);
 
-  // Persistence gate. It only suppresses the *boot* write (so a corrupt v2 is
-  // never silently clobbered, including under StrictMode's double effect run).
-  // Every state object produced by a user action goes straight to disk.
+  // Persistence gate
   const persistGate = useRef(createPersistGate(initial));
   useEffect(() => {
-    if (persistGate.current(state)) saveState(state);
+    if (persistGate.current(state)) {
+      saveState(state);
+      // Also notify repository
+      repository.saveSnapshot(state).catch(() => {});
+    }
   }, [state]);
 
-  // Reminder engine reads latest state via refs without re-subscribing.
+  // Reminder engine
   const stateRef = useRef(state);
   stateRef.current = state;
   useEffect(() => {
     return startReminderEngine(
       () => stateRef.current.tasks,
       () => stateRef.current.settings,
+      () => stateRef.current.scheduleBlocks,
+      () => stateRef.current.tasks.reduce((m, t) => { m.set(t.id, t); return m; }, new Map()),
     );
   }, []);
 
-  // ---- Actions: stable for the provider's lifetime ----
-  // Every action uses `setState(updater)` or `stateRef.current`, so the set has
-  // zero reactive dependencies and is created exactly once.
+  const now = () => Date.now();
+
+  // ---- Actions ----
   const actions = useMemo<ActionsSlice>(() => ({
     addTask: (partial) => {
       const t = createTask(partial);
@@ -108,10 +113,21 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     updateTask: (id, patch) =>
       setState((s) => ({
         ...s,
-        tasks: s.tasks.map((t) => (t.id === id ? { ...t, ...patch } : t)),
+        tasks: s.tasks.map((t) =>
+          t.id === id ? { ...t, ...patch, updatedAt: now() } : t,
+        ),
       })),
-    deleteTask: (id) =>
-      setState((s) => ({ ...s, tasks: s.tasks.filter((t) => t.id !== id) })),
+    deleteTask: (id) => {
+      const blockIds = stateRef.current.scheduleBlocks
+        .filter((b) => b.taskId === id)
+        .map((b) => b.id);
+      cancelRemindersByTask(blockIds);
+      setState((s) => ({
+        ...s,
+        tasks: s.tasks.filter((t) => t.id !== id),
+        scheduleBlocks: s.scheduleBlocks.filter((b) => b.taskId !== id),
+      }));
+    },
     toggleDone: (id) =>
       setState((s) => ({
         ...s,
@@ -120,7 +136,8 @@ export function FlowProvider({ children }: { children: ReactNode }) {
             ? {
                 ...t,
                 status: t.status === 'done' ? 'todo' : 'done',
-                completedAt: t.status === 'done' ? null : Date.now(),
+                completedAt: t.status === 'done' ? null : now(),
+                updatedAt: now(),
               }
             : t,
         ),
@@ -130,7 +147,7 @@ export function FlowProvider({ children }: { children: ReactNode }) {
         ...s,
         tasks: s.tasks.map((t) =>
           t.id === id
-            ? { ...t, status, completedAt: status === 'done' ? Date.now() : null }
+            ? { ...t, status, completedAt: status === 'done' ? now() : null, updatedAt: now() }
             : t,
         ),
       })),
@@ -155,24 +172,73 @@ export function FlowProvider({ children }: { children: ReactNode }) {
       return { ok: true, course: { ...current, ...next } };
     },
     deleteCourse: (id) => setState((s) => deleteCourseFromState(s, id)),
-    // Immutable per-day write: a fresh availability object + a fresh array for
-    // the edited day. Persistence is the existing effect — storage is untouched.
     updateAvailability: (day, slots) =>
       setState((s) => ({
         ...s,
-        availability: { ...s.availability, [day]: [...slots] },
+        availability: { ...s.availability, [day]: normalizeAvailability(slots) },
       })),
     updateSettings: (patch) =>
       setState((s) => ({ ...s, settings: { ...s.settings, ...patch } })),
-    // One setState: append (never overwrite / delete), id-deduplicated via the
-    // pure helper. Persistence is the existing effect — storage is untouched.
     addScheduleBlocks: (blocks) =>
       setState((s) => ({ ...s, scheduleBlocks: mergeScheduleBlocks(s.scheduleBlocks, blocks) })),
+    // Phase 1: ScheduleBlock CRUD
+    addScheduleBlock: (block) =>
+      setState((s) => ({
+        ...s,
+        scheduleBlocks: [...s.scheduleBlocks, { ...block, createdAt: now(), updatedAt: now() }],
+      })),
+    updateScheduleBlock: (id, patch) =>
+      setState((s) => ({
+        ...s,
+        scheduleBlocks: s.scheduleBlocks.map((b) =>
+          b.id === id ? { ...b, ...patch, updatedAt: now() } : b,
+        ),
+      })),
+    deleteScheduleBlock: (id) => {
+      cancelRemindersByTask([id]);
+      setState((s) => ({
+        ...s,
+        scheduleBlocks: s.scheduleBlocks.filter((b) => b.id !== id),
+      }));
+    },
+    moveScheduleBlock: (id, date, startTime, endTime) => {
+      const start = parseHHMM(startTime);
+      const end = parseHHMM(endTime);
+      const planned = end !== null && start !== null && end > start ? end - start : 0;
+      setState((s) => ({
+        ...s,
+        scheduleBlocks: s.scheduleBlocks.map((b) =>
+          b.id === id
+            ? { ...b, date, startTime, endTime, plannedMinutes: planned, updatedAt: now() }
+            : b,
+        ),
+      }));
+    },
+    resizeScheduleBlock: (id, endTime) => {
+      setState((s) => {
+        const block = s.scheduleBlocks.find((b) => b.id === id);
+        if (!block) return s;
+        const start = parseHHMM(block.startTime);
+        const end = parseHHMM(endTime);
+        const planned = end !== null && start !== null && end > start ? end - start : block.plannedMinutes;
+        return {
+          ...s,
+          scheduleBlocks: s.scheduleBlocks.map((b) =>
+            b.id === id ? { ...b, endTime, plannedMinutes: planned, updatedAt: now() } : b,
+          ),
+        };
+      });
+    },
+    lockScheduleBlock: (id, locked) =>
+      setState((s) => ({
+        ...s,
+        scheduleBlocks: s.scheduleBlocks.map((b) =>
+          b.id === id ? { ...b, locked, updatedAt: now() } : b,
+        ),
+      })),
   }), []);
 
-  // ---- Derived slices: each memoized on its own slice of state ----
-  // A change to `tasks` recreates only `tasksSlice`; components that read only
-  // `settings` or `courses` are not affected.
+  // ---- Derived slices ----
   const tasksSlice = useMemo<TasksSlice>(
     () => ({
       tasks: state.tasks,
@@ -222,10 +288,6 @@ export function FlowProvider({ children }: { children: ReactNode }) {
 }
 
 // ----------------------------------------------------------------- Hooks
-//
-// Each hook subscribes to exactly one Context, so a component that calls
-// `useSettings()` won't re-render when `tasks` changes — only when `settings`
-// does. `useActions()` is stable for the provider's lifetime.
 
 export function useTasks(): TasksSlice {
   const ctx = useContext(TasksContext);
@@ -261,4 +323,11 @@ export function useActions(): ActionsSlice {
   const ctx = useContext(ActionsContext);
   if (!ctx) throw new Error('useActions must be used within FlowProvider');
   return ctx;
+}
+
+// Helper used by ScheduleBlock CRUD
+function parseHHMM(v: string): number | null {
+  if (!/^(?:[01]\d|2[0-3]):[0-5]\d$/.test(v)) return null;
+  const [h, m] = v.split(':').map(Number);
+  return h * 60 + m;
 }

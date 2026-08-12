@@ -6,7 +6,6 @@ import { useCourses, useActions } from '@/store';
 import {
   ESTIMATED_MINUTES_PRESETS,
   findCourse,
-  legacyTagForCourseName,
   parseEstimatedMinutes,
 } from '@/lib/domain';
 import { aiDecomposeSubtasks } from '@/lib/ai';
@@ -59,9 +58,6 @@ export function TaskModal({ task, defaultDate, onClose }: TaskModalProps) {
       // Dangling ids are cleaned up on save so the task settles as 未分类.
       courseId: course?.id,
       estimatedMinutes: estimate.value,
-      // Legacy compat only: keep the old tag meaningful when the course maps onto
-      // one of the five original categories, otherwise leave whatever was there.
-      tag: course ? legacyTagForCourseName(course.name) : draft.tag,
     };
     if (isEdit) updateTask(task!.id, payload);
     else addTask(payload);

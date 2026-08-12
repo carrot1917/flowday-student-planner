@@ -9,12 +9,15 @@ import {
   createCourse,
   deleteCourseFromState,
   findCourse,
+  getWeekStartsOn,
   isUncategorized,
   isValidHHMM,
   legacyTagForCourseName,
+  normalizeAvailability,
   normalizeEstimatedMinutes,
   parseEstimatedMinutes,
   parseHHMM,
+  sanitizeScheduleBlocks,
   slotMinutes,
   suggestCourseColor,
   totalAvailableMinutes,
@@ -24,7 +27,7 @@ import {
   weekdayForISO,
   weekdaysOrdered,
 } from './domain';
-import type { AppState, Course, Task, Weekday, WeeklyAvailability } from '@/types';
+import type { AppState, Course, ScheduleBlock, Task, Weekday, WeeklyAvailability } from '@/types';
 import storeSrc from '../store.tsx?raw';
 import availabilityPageSrc from '../pages/AvailabilityPage.tsx?raw';
 
@@ -356,8 +359,8 @@ describe('store exposes availability (source-level)', () => {
     expect(storeSrc).toContain('availability: state.availability');
   });
 
-  it('writes immutably and only touches the edited weekday', () => {
-    expect(storeSrc).toContain('availability: { ...s.availability, [day]: [...slots] }');
+  it('writes immutably and normalizes the edited weekday', () => {
+    expect(storeSrc).toContain('availability: { ...s.availability, [day]: normalizeAvailability(slots) }');
   });
 });
 
@@ -387,6 +390,124 @@ describe('AvailabilityPage wiring (source-level)', () => {
     expect(availabilityPageSrc).not.toMatch(/\bscheduleBlocks\b/);
     expect(availabilityPageSrc).not.toMatch(/\btasks\b/);
     expect(availabilityPageSrc).not.toMatch(/\btaskById\b/);
+  });
+});
+
+// ---------------------------------------------------------------- Phase 0
+
+describe('sanitizeScheduleBlocks', () => {
+  const tasks: Task[] = [
+    { id: 't1', title: 'a', description: '', dueDate: '2026-08-10', startTime: '', endTime: '', priority: 'medium', tag: 'other', status: 'todo', createdAt: 0, completedAt: null, subtasks: [] },
+    { id: 't2', title: 'b', description: '', dueDate: '2026-08-11', startTime: '', endTime: '', priority: 'medium', tag: 'other', status: 'todo', createdAt: 0, completedAt: null, subtasks: [] },
+  ];
+  const blocks: ScheduleBlock[] = [
+    { id: 'b1', taskId: 't1', date: '2026-08-10', startTime: '09:00', endTime: '10:00', plannedMinutes: 60 },
+    { id: 'b2', taskId: 't2', date: '2026-08-10', startTime: '10:00', endTime: '11:00', plannedMinutes: 60 },
+    { id: 'b3', taskId: 'ghost', date: '2026-08-10', startTime: '11:00', endTime: '12:00', plannedMinutes: 60 },
+  ];
+
+  it('keeps blocks whose taskId exists', () => {
+    const result = sanitizeScheduleBlocks(tasks, blocks);
+    expect(result.map((b) => b.id)).toEqual(['b1', 'b2']);
+  });
+
+  it('removes orphan blocks (dangling taskId)', () => {
+    const result = sanitizeScheduleBlocks(tasks, blocks);
+    expect(result.find((b) => b.id === 'b3')).toBeUndefined();
+  });
+
+  it('returns empty array when all blocks are orphaned', () => {
+    const result = sanitizeScheduleBlocks(tasks, [blocks[2]!]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('does not mutate the input array', () => {
+    const copy = [...blocks];
+    sanitizeScheduleBlocks(tasks, blocks);
+    expect(blocks).toEqual(copy);
+  });
+});
+
+describe('normalizeAvailability', () => {
+  it('passes through a single valid slot unchanged', () => {
+    const result = normalizeAvailability([{ startTime: '09:00', endTime: '10:00' }]);
+    expect(result).toEqual([{ startTime: '09:00', endTime: '10:00' }]);
+  });
+
+  it('rejects start === end (zero-length)', () => {
+    const result = normalizeAvailability([{ startTime: '09:00', endTime: '09:00' }]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('rejects start > end', () => {
+    const result = normalizeAvailability([{ startTime: '10:00', endTime: '09:00' }]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('rejects malformed time strings', () => {
+    const result = normalizeAvailability([{ startTime: '', endTime: '10:00' }, { startTime: '25:00', endTime: '26:00' }]);
+    expect(result).toHaveLength(0);
+  });
+
+  it('merges overlapping intervals', () => {
+    const result = normalizeAvailability([
+      { startTime: '09:00', endTime: '12:00' },
+      { startTime: '11:00', endTime: '14:00' },
+    ]);
+    expect(result).toEqual([{ startTime: '09:00', endTime: '14:00' }]);
+  });
+
+  it('merges adjacent intervals (end === next start)', () => {
+    const result = normalizeAvailability([
+      { startTime: '09:00', endTime: '12:00' },
+      { startTime: '12:00', endTime: '14:00' },
+    ]);
+    expect(result).toEqual([{ startTime: '09:00', endTime: '14:00' }]);
+  });
+
+  it('deduplicates identical intervals', () => {
+    const result = normalizeAvailability([
+      { startTime: '09:00', endTime: '10:00' },
+      { startTime: '09:00', endTime: '10:00' },
+    ]);
+    expect(result).toEqual([{ startTime: '09:00', endTime: '10:00' }]);
+  });
+
+  it('sorts unsorted intervals', () => {
+    const result = normalizeAvailability([
+      { startTime: '14:00', endTime: '15:00' },
+      { startTime: '09:00', endTime: '10:00' },
+    ]);
+    expect(result).toEqual([
+      { startTime: '09:00', endTime: '10:00' },
+      { startTime: '14:00', endTime: '15:00' },
+    ]);
+  });
+
+  it('handles multiple non-overlapping intervals', () => {
+    const result = normalizeAvailability([
+      { startTime: '09:00', endTime: '10:00' },
+      { startTime: '14:00', endTime: '15:00' },
+      { startTime: '19:00', endTime: '20:00' },
+    ]);
+    expect(result).toHaveLength(3);
+  });
+
+  it('does not mutate the input array', () => {
+    const input = [{ startTime: '09:00', endTime: '10:00' }];
+    const copy = [...input];
+    normalizeAvailability(input);
+    expect(input).toEqual(copy);
+  });
+});
+
+describe('getWeekStartsOn', () => {
+  it('returns 1 for Monday start', () => {
+    expect(getWeekStartsOn({ startOfWeek: 1 })).toBe(1);
+  });
+
+  it('returns 0 for Sunday start', () => {
+    expect(getWeekStartsOn({ startOfWeek: 0 })).toBe(0);
   });
 });
 

@@ -128,3 +128,24 @@ body {
 
 /* Checkbox tick */
 .tick-anim { animation: checkPop 0.4s ease; }
+
+/* focus-visible: only show focus ring when navigating via keyboard */
+*:focus-visible {
+  outline: 2px solid var(--color-brand-400);
+  outline-offset: 2px;
+}
+*:focus:not(:focus-visible) {
+  outline: none;
+}
+
+/* prefers-reduced-motion: disable animations for vestibular disorders */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}

@@ -6,8 +6,6 @@ export type Status = 'todo' | 'doing' | 'done';
 
 export type Tag = 'math' | 'english' | 'coding' | 'reading' | 'other';
 
-// ----- Phase 1: new domain types for the multi-user-ready model -----
-
 export type Weekday =
   | 'monday'
   | 'tuesday'
@@ -29,11 +27,16 @@ export interface Course {
 // Distinct from `dueDate` (the deadline) and from `Availability` (free time).
 export interface ScheduleBlock {
   id: string;
-  taskId: string;
+  taskId?: string; // optional in v3 — blocks can be placeholder/unscheduled
   date: string; // YYYY-MM-DD — the day the study session happens
   startTime: string; // HH:mm
   endTime: string; // HH:mm
   plannedMinutes: number;
+  source: 'manual' | 'scheduler' | 'external';
+  locked: boolean;
+  status: 'planned' | 'done' | 'skipped';
+  createdAt: number;
+  updatedAt: number;
 }
 
 // One free-study interval on a given weekday.
@@ -48,19 +51,15 @@ export interface Task {
   id: string;
   title: string;
   description: string;
-  dueDate: string; // ISO date (YYYY-MM-DD) — the DEADLINE
-  // --- DEPRECATED scheduling fields (kept for migration / backward-compat) ---
-  startTime: string; // HH:mm — legacy; superseded by ScheduleBlock
-  endTime: string; // HH:mm — legacy; superseded by ScheduleBlock
-  priority: Priority;
-  tag: Tag; // DEPRECATED category — superseded by Course (kept for migration)
-  // --- new fields ---
   courseId?: string; // links to Course
+  priority: Priority;
   status: Status;
-  createdAt: number;
-  completedAt: number | null;
-  subtasks: Subtask[];
+  dueDate?: string; // ISO date (YYYY-MM-DD) — the DEADLINE
   estimatedMinutes?: number; // total expected study time
+  createdAt: number;
+  updatedAt: number;
+  completedAt?: number | null;
+  subtasks: Subtask[];
 }
 
 export interface Subtask {
@@ -74,9 +73,16 @@ export interface Settings {
   reminderTime: number; // minutes after midnight for daily summary reminder
   dueReminder: boolean; // remind on due date
   startOfWeek: 0 | 1; // 0 = Sunday, 1 = Monday
+  timezone: string; // IANA timezone, e.g. 'Asia/Shanghai'
+  dailyStudyLimitMinutes: number; // max study minutes per day
+  minBlockMinutes: number; // minimum scheduler block duration
+  maxBlockMinutes: number; // maximum scheduler block duration
+  breakMinutes: number; // break minutes between blocks
 }
 
-// Unified, versioned application state (localStorage schema v2).
+// Unified, versioned application state (localStorage versioned schema).
+// v2: initial versioned schema (Phase 1 migration target)
+// v3: current schema with extended ScheduleBlock, cleaned Task, expanded Settings
 export interface AppState {
   version: number;
   hasSeededDemo: boolean; // once true, demo is never auto-generated again
@@ -103,16 +109,6 @@ export const TAG_HEX: Record<Tag, string> = {
   reading: '#8b5cf6',
   other: '#64748b',
 };
-
-export const TAG_COLORS: Record<Tag, string> = {
-  math: 'bg-rose-100 text-rose-600 ring-rose-200',
-  english: 'bg-amber-100 text-amber-600 ring-amber-200',
-  coding: 'bg-sky-100 text-sky-600 ring-sky-200',
-  reading: 'bg-violet-100 text-violet-600 ring-violet-200',
-  other: 'bg-slate-100 text-slate-600 ring-slate-200',
-};
-
-// ----- Phase 2: Course presentation constants -----
 
 // Shown whenever a Task has no courseId, or points at a Course that no longer
 // exists (e.g. the Course was deleted — tasks are NEVER deleted with it).

@@ -1,10 +1,9 @@
-import type { Course, Priority, Status, Tag } from '@/types';
+import React from 'react';
+import type { Course, Priority, Status } from '@/types';
 import {
   PRIORITY_COLORS,
   PRIORITY_LABELS,
   STATUS_LABELS,
-  TAG_COLORS,
-  TAG_LABELS,
   UNCATEGORIZED_COLOR,
   UNCATEGORIZED_LABEL,
 } from '@/types';
@@ -19,15 +18,6 @@ export function PriorityBadge({ priority }: { priority: Priority }) {
   return (
     <span className={`inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[11px] font-medium ${PRIORITY_COLORS[priority]} text-white`}>
       {PRIORITY_LABELS[priority]}
-    </span>
-  );
-}
-
-/** @deprecated Phase 2 replaced this with <CourseBadge>. Kept until `Task.tag` is removed in Phase 3. */
-export function TagBadge({ tag }: { tag: Tag }) {
-  return (
-    <span className={`inline-flex items-center rounded-full px-2 py-0.5 text-[11px] font-medium ring-1 ${TAG_COLORS[tag]}`}>
-      {TAG_LABELS[tag]}
     </span>
   );
 }
@@ -107,6 +97,155 @@ export function EmptyState({ icon: Icon, title, hint }: { icon: React.ComponentT
       </div>
       <p className="mt-4 text-sm font-semibold text-ink-700">{title}</p>
       {hint && <p className="mt-1 text-xs text-ink-400">{hint}</p>}
+    </div>
+  );
+}
+
+// ---------------------------------------------------------------------------
+// UI Primitives — Phase 1
+// ---------------------------------------------------------------------------
+
+interface ButtonProps extends React.ButtonHTMLAttributes<HTMLButtonElement> {
+  variant?: 'primary' | 'secondary' | 'ghost' | 'danger';
+  size?: 'sm' | 'md' | 'lg';
+}
+
+export function Button({ variant = 'primary', size = 'md', className = '', children, ...rest }: ButtonProps) {
+  const base = 'inline-flex items-center justify-center gap-1.5 font-semibold transition-all focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500 disabled:opacity-40';
+  const variants: Record<string, string> = {
+    primary: 'bg-brand-500 text-white shadow-md shadow-brand-300/40 hover:bg-brand-600 rounded-2xl',
+    secondary: 'bg-brand-50 text-brand-600 hover:bg-brand-100 rounded-2xl',
+    ghost: 'text-ink-500 hover:bg-brand-50 rounded-xl',
+    danger: 'bg-rose-50 text-rose-600 hover:bg-rose-100 rounded-2xl',
+  };
+  const sizes: Record<string, string> = {
+    sm: 'px-3 py-1.5 text-xs',
+    md: 'px-4 py-2 text-sm',
+    lg: 'px-5 py-2.5 text-base',
+  };
+  return (
+    <button className={`${base} ${variants[variant]} ${sizes[size]} ${className}`} {...rest}>
+      {children}
+    </button>
+  );
+}
+
+interface InputProps extends React.InputHTMLAttributes<HTMLInputElement> {
+  label?: string;
+  error?: string;
+}
+
+export const Input = React.forwardRef<HTMLInputElement, InputProps>(
+  ({ label, error, className = '', id, ...rest }, ref) => {
+    const inputId = id ?? label?.toLowerCase().replace(/\s+/g, '-');
+    return (
+      <div className="flex flex-col gap-1">
+        {label && (
+          <label htmlFor={inputId} className="text-xs font-semibold text-ink-500">
+            {label}
+          </label>
+        )}
+        <input
+          ref={ref}
+          id={inputId}
+          className={`rounded-xl border bg-sand-50 px-3.5 py-2.5 text-sm outline-none transition focus:bg-white focus:ring-2 ${
+            error
+              ? 'border-rose-300 focus:border-rose-400 focus:ring-rose-200'
+              : 'border-brand-100 focus:border-brand-400 focus:ring-brand-200'
+          } ${className}`}
+          aria-invalid={!!error}
+          aria-describedby={error ? `${inputId}-error` : undefined}
+          {...rest}
+        />
+        {error && (
+          <p id={`${inputId}-error`} className="text-[11px] text-rose-500" role="alert">
+            {error}
+          </p>
+        )}
+      </div>
+    );
+  },
+);
+Input.displayName = 'Input';
+
+// Simple focus-trap hook for dialogs
+function useFocusTrap(open: boolean) {
+  const ref = React.useRef<HTMLDivElement>(null);
+  React.useEffect(() => {
+    if (!open || !ref.current) return;
+    const prev = document.activeElement as HTMLElement | null;
+    // Focus the first focusable element inside the dialog
+    const focusable = ref.current.querySelector<HTMLElement>(
+      'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+    );
+    focusable?.focus();
+
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key !== 'Tab' || !ref.current) return;
+      const els = ref.current.querySelectorAll<HTMLElement>(
+        'button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])',
+      );
+      if (els.length === 0) return;
+      const first = els[0]!;
+      const last = els[els.length - 1]!;
+      if (e.shiftKey) {
+        if (document.activeElement === first) { last.focus(); e.preventDefault(); }
+      } else {
+        if (document.activeElement === last) { first.focus(); e.preventDefault(); }
+      }
+    };
+
+    window.addEventListener('keydown', handleKeyDown);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      // Focus return: restore focus to the trigger element
+      prev?.focus();
+    };
+  }, [open]);
+  return ref;
+}
+
+interface DialogProps {
+  open: boolean;
+  onClose: () => void;
+  title: string;
+  children: React.ReactNode;
+}
+
+export function Dialog({ open, onClose, title, children }: DialogProps) {
+  const trapRef = useFocusTrap(open);
+
+  if (!open) return null;
+
+  return (
+    <div
+      className="fixed inset-0 z-50 flex items-end justify-center bg-ink-900/30 backdrop-blur-sm sm:items-center"
+      onClick={onClose}
+      role="presentation"
+    >
+      <div
+        ref={trapRef}
+        role="dialog"
+        aria-modal="true"
+        aria-label={title}
+        className="animate-pop-in w-full max-w-lg overflow-hidden rounded-t-3xl bg-white shadow-2xl sm:rounded-3xl"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between border-b border-brand-50 px-6 py-4">
+          <h2 className="text-base font-bold text-ink-900">{title}</h2>
+          <button
+            onClick={onClose}
+            className="rounded-lg p-1.5 text-ink-400 hover:bg-brand-50 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-brand-500"
+            aria-label="关闭"
+          >
+            <svg className="h-5 w-5" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+              <line x1="18" y1="6" x2="6" y2="18" />
+              <line x1="6" y1="6" x2="18" y2="18" />
+            </svg>
+          </button>
+        </div>
+        <div className="max-h-[70vh] overflow-y-auto px-6 py-5">{children}</div>
+      </div>
     </div>
   );
 }
