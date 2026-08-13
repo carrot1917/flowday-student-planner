@@ -369,6 +369,259 @@ describe('contract & properties', () => {
   });
 });
 
+// ------------------------------------------------------- Phase 2 extensions
+
+describe('daily-cap (Phase 2)', () => {
+  it('flags a day whose total study minutes exceed the cap', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '11:00', 120),
+      mkBlock('B', 't1', '2026-08-10', '14:00', '16:00', 120),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      dailyMaxMinutes: 200,
+    });
+    const caps = res.filter((c) => c.type === 'daily-cap');
+    expect(caps).toHaveLength(1);
+    expect(caps[0].severity).toBe('warning');
+    expect(caps[0].blockIds).toEqual(expect.arrayContaining(['A', 'B']));
+  });
+
+  it('does not flag when total is exactly at the cap', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '11:00', 120),
+      mkBlock('B', 't1', '2026-08-10', '14:00', '16:00', 120),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      dailyMaxMinutes: 240,
+    });
+    expect(res.filter((c) => c.type === 'daily-cap')).toHaveLength(0);
+  });
+
+  it('counts merged coverage, not stored plannedMinutes (no double count on overlap)', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '11:00', 999), // real 120 min
+      mkBlock('B', 't1', '2026-08-10', '10:00', '12:00', 999), // overlaps, real union = 180
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      dailyMaxMinutes: 200,
+    });
+    // Union = 180 < 200, so no daily-cap despite plannedMinutes claiming 1998.
+    expect(res.filter((c) => c.type === 'daily-cap')).toHaveLength(0);
+  });
+
+  it('is gated: no daily-cap when dailyMaxMinutes is omitted', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '23:00', 999),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '23:59' }]),
+    });
+    expect(res.filter((c) => c.type === 'daily-cap')).toHaveLength(0);
+  });
+});
+
+describe('minimum-break (Phase 2)', () => {
+  it('flags two consecutive sessions closer than breakMinutes', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '10:00'),
+      mkBlock('B', 't1', '2026-08-10', '10:05', '11:00'), // 5 min gap < 10
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      breakMinutes: 10,
+    });
+    const breaks = res.filter((c) => c.type === 'minimum-break');
+    expect(breaks).toHaveLength(1);
+    expect(breaks[0].severity).toBe('warning');
+  });
+
+  it('does not flag when the gap equals breakMinutes (boundary)', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '10:00'),
+      mkBlock('B', 't1', '2026-08-10', '10:10', '11:00'), // 10 min gap == 10
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      breakMinutes: 10,
+    });
+    expect(res.filter((c) => c.type === 'minimum-break')).toHaveLength(0);
+  });
+
+  it('does not flag touching sessions when breakMinutes is 0 or omitted', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '10:00'),
+      mkBlock('B', 't1', '2026-08-10', '10:00', '11:00'),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    expect(res.filter((c) => c.type === 'minimum-break')).toHaveLength(0);
+  });
+
+  it('does not flag overlapping pairs (already reported as time-overlap)', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '11:00'),
+      mkBlock('B', 't1', '2026-08-10', '10:00', '12:00'),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      breakMinutes: 60,
+    });
+    expect(res.filter((c) => c.type === 'minimum-break')).toHaveLength(0);
+    expect(res.filter((c) => c.type === 'time-overlap')).toHaveLength(1);
+  });
+});
+
+describe('invalid-duration (Phase 2)', () => {
+  it('flags a block longer than maxBlockMinutes as an error', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-10', '09:00', '12:00', 180)]; // 180 min
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      maxBlockMinutes: 120,
+    });
+    const d = res.filter((c) => c.type === 'invalid-duration');
+    expect(d).toHaveLength(1);
+    expect(d[0].severity).toBe('error');
+  });
+
+  it('flags a block shorter than minBlockMinutes as a warning', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-10', '09:00', '09:10', 10)]; // 10 min
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      minBlockMinutes: 25,
+    });
+    const d = res.filter((c) => c.type === 'invalid-duration');
+    expect(d).toHaveLength(1);
+    expect(d[0].severity).toBe('warning');
+  });
+
+  it('does not flag when duration is within bounds', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-10', '09:00', '10:30', 90)]; // 90 min
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      minBlockMinutes: 25,
+      maxBlockMinutes: 120,
+    });
+    expect(res.filter((c) => c.type === 'invalid-duration')).toHaveLength(0);
+  });
+});
+
+describe('deadline-violation (Phase 2)', () => {
+  it('flags a block scheduled after the task deadline', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-15', '09:00', '10:00')];
+    const tasks = new Map([['t1', { ...mkTask('t1'), dueDate: '2026-08-10' }]]);
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasks,
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    const d = res.filter((c) => c.type === 'deadline-violation');
+    expect(d).toHaveLength(1);
+    expect(d[0].severity).toBe('error');
+  });
+
+  it('flags a block on the deadline day when allowDeadlineDay=false', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-10', '09:00', '10:00')];
+    const tasks = new Map([['t1', { ...mkTask('t1'), dueDate: '2026-08-10' }]]);
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasks,
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+      allowDeadlineDay: false,
+    });
+    const d = res.filter((c) => c.type === 'deadline-violation');
+    expect(d).toHaveLength(1);
+    expect(d[0].severity).toBe('error');
+  });
+
+  it('does not flag a block on the deadline day when allowDeadlineDay=true (default)', () => {
+    const blocks = [mkBlock('A', 't1', '2026-08-10', '09:00', '10:00')];
+    const tasks = new Map([['t1', { ...mkTask('t1'), dueDate: '2026-08-10' }]]);
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasks,
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    expect(res.filter((c) => c.type === 'deadline-violation')).toHaveLength(0);
+  });
+});
+
+describe('external-busy (Phase 2)', () => {
+  it('reports external-busy instead of time-overlap when an external block is involved', () => {
+    const blocks = [
+      { ...mkBlock('S', 't1', '2026-08-10', '09:00', '11:00'), source: 'manual' as const },
+      { ...mkBlock('E', 'ext', '2026-08-10', '10:00', '12:00'), source: 'external' as const },
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    const external = res.filter((c) => c.type === 'external-busy');
+    const overlap = res.filter((c) => c.type === 'time-overlap');
+    expect(external).toHaveLength(1);
+    expect(overlap).toHaveLength(0);
+    expect(external[0].severity).toBe('error');
+  });
+
+  it('still reports time-overlap for two non-external overlapping blocks', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '11:00'),
+      mkBlock('B', 't2', '2026-08-10', '10:00', '12:00'),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1', 't2']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    expect(res.filter((c) => c.type === 'external-busy')).toHaveLength(0);
+    expect(res.filter((c) => c.type === 'time-overlap')).toHaveLength(1);
+  });
+});
+
+describe('Phase 2 extensions — gating (backwards compatibility)', () => {
+  it('omitting all Phase 2 settings produces exactly the original 4 conflict types', () => {
+    const blocks = [
+      mkBlock('A', 't1', '2026-08-10', '09:00', '10:00'),
+      mkBlock('B', 't1', '2026-08-10', '09:30', '10:30'),
+    ];
+    const res = detectScheduleConflicts({
+      blocks,
+      taskById: tasksMap(['t1']),
+      availability: availAll([{ startTime: '08:00', endTime: '20:00' }]),
+    });
+    const types = new Set(res.map((c) => c.type));
+    for (const t of types) {
+      expect(['time-overlap', 'availability-violation', 'invalid-block', 'orphan-block']).toContain(t);
+    }
+  });
+});
+
 // --------------------------------------------------------------- wiring
 
 describe('conflict.ts wiring', () => {

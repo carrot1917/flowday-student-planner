@@ -25,7 +25,13 @@ export type ConflictType =
   | 'time-overlap' // two study sessions share minutes on the same day
   | 'availability-violation' // a session falls outside that day's available window
   | 'invalid-block' // malformed time, cross-midnight, or malformed date
-  | 'orphan-block'; // block.taskId points at a Task that no longer exists
+  | 'orphan-block' // block.taskId points at a Task that no longer exists
+  // Phase 2 extensions (only emitted when the corresponding setting is supplied):
+  | 'daily-cap' // a day's total study minutes exceed dailyStudyLimitMinutes
+  | 'minimum-break' // two consecutive sessions sit closer than breakMinutes
+  | 'invalid-duration' // a session is shorter/longer than the configured bounds
+  | 'deadline-violation' // a session is scheduled after its task's deadline
+  | 'external-busy'; // a study session overlaps an external (busy) block
 
 export type ConflictSeverity = 'error' | 'warning';
 
@@ -53,6 +59,19 @@ export interface ConflictInput {
   taskById: Map<string, Task>;
   /** Per-weekday available windows. */
   availability: WeeklyAvailability;
+  // Phase 2 optional constraint settings. Each new check is GATED on the
+  // presence of the relevant field, so callers that omit them (including every
+  // pre-Phase-2 test) get exactly the original behavior.
+  /** When provided, days whose total study minutes exceed this are flagged. */
+  dailyMaxMinutes?: number;
+  /** When > 0, consecutive sessions closer than this are flagged. */
+  breakMinutes?: number;
+  /** When provided, sessions shorter than this are flagged (warning). */
+  minBlockMinutes?: number;
+  /** When provided, sessions longer than this are flagged (error). */
+  maxBlockMinutes?: number;
+  /** When false, a session on its task's deadline day is a violation. */
+  allowDeadlineDay?: boolean;
 }
 
 // --------------------------------------------------------------- internals
@@ -93,8 +112,16 @@ function toSlotInterval(s: AvailabilitySlot): Interval | null {
  *    both orphan-block and overlap / availability conflicts.
  */
 export function detectScheduleConflicts(input: ConflictInput): ScheduleConflict[] {
-  const { blocks, taskById, availability } = input;
+  const { blocks, taskById, availability, dailyMaxMinutes, breakMinutes, minBlockMinutes, maxBlockMinutes, allowDeadlineDay } = input;
   const conflicts: ScheduleConflict[] = [];
+
+  const hasDailyCap = typeof dailyMaxMinutes === 'number' && Number.isFinite(dailyMaxMinutes);
+  const hasBreak = typeof breakMinutes === 'number' && breakMinutes > 0;
+  const hasMin = typeof minBlockMinutes === 'number' && Number.isFinite(minBlockMinutes);
+  const hasMax = typeof maxBlockMinutes === 'number' && Number.isFinite(maxBlockMinutes);
+  // allowDeadlineDay defaults to true (allow) when unspecified, matching the
+  // pre-Phase-2 behavior where the deadline day was a legal planning day.
+  const allowDeadline = allowDeadlineDay !== false;
 
   const byDate = groupBlocksByDate(blocks);
 
@@ -159,25 +186,115 @@ export function detectScheduleConflicts(input: ConflictInput): ScheduleConflict[
         });
       }
 
+      // invalid-duration (Phase 2): too long is a hard error; too short is a
+      // warning (it may be a legitimate finishing block).
+      const duration = interval.end - interval.start;
+      if (hasMax && duration > (maxBlockMinutes as number)) {
+        conflicts.push({
+          type: 'invalid-duration',
+          blockIds: [b.id],
+          date,
+          severity: 'error',
+          message: `学习时段时长 ${duration} 分钟超过最长限制 ${maxBlockMinutes} 分钟`,
+          detail: { taskId: b.taskId },
+        });
+      } else if (hasMin && duration < (minBlockMinutes as number)) {
+        conflicts.push({
+          type: 'invalid-duration',
+          blockIds: [b.id],
+          date,
+          severity: 'warning',
+          message: `学习时段时长 ${duration} 分钟低于最短限制 ${minBlockMinutes} 分钟`,
+          detail: { taskId: b.taskId },
+        });
+      }
+
+      // deadline-violation (Phase 2): a session scheduled after its task's
+      // deadline, or on the deadline day when the user forbade that.
+      if (task?.dueDate) {
+        const afterDeadline = b.date > task.dueDate;
+        const onDeadlineForbidden = !allowDeadline && b.date === task.dueDate;
+        if (afterDeadline || onDeadlineForbidden) {
+          conflicts.push({
+            type: 'deadline-violation',
+            blockIds: [b.id],
+            date,
+            severity: 'error',
+            message: onDeadlineForbidden
+              ? `学习时段落在截止日当天（${task.dueDate}），但当前设置不允许在截止日当天排期`
+              : `学习时段晚于任务截止日（${task.dueDate}）`,
+            detail: { taskId: b.taskId },
+          });
+        }
+      }
+
       valid.push({ b, interval });
     }
 
     // O(n²) pairwise strict-overlap scan over the valid blocks of this day.
+    // When either block is `external`, the overlap is reported as
+    // `external-busy` (a more specific label than time-overlap); otherwise the
+    // classic `time-overlap` is emitted. Existing fixtures use only
+    // source='manual', so their time-overlap counts are unchanged.
     for (let i = 0; i < valid.length; i++) {
       for (let j = i + 1; j < valid.length; j++) {
         const a = valid[i].interval;
         const c = valid[j].interval;
         if (a.start < c.end && c.start < a.end) {
+          const bi = valid[i].b;
+          const bj = valid[j].b;
+          const involvesExternal = bi.source === 'external' || bj.source === 'external';
           conflicts.push({
-            type: 'time-overlap',
-            blockIds: [valid[i].b.id, valid[j].b.id],
+            type: involvesExternal ? 'external-busy' : 'time-overlap',
+            blockIds: [bi.id, bj.id],
             date,
             severity: 'error',
-            message: `学习时段「${valid[i].b.startTime}–${valid[i].b.endTime}」与「${valid[j].b.startTime}–${valid[j].b.endTime}」时间重叠`,
+            message: involvesExternal
+              ? `学习时段「${bi.startTime}–${bi.endTime}」与外部忙碌时段「${bj.startTime}–${bj.endTime}」冲突`
+              : `学习时段「${bi.startTime}–${bi.endTime}」与「${bj.startTime}–${bj.endTime}」时间重叠`,
             detail: {
               intervals: [{ start: Math.max(a.start, c.start), end: Math.min(a.end, c.end) }],
             },
           });
+        }
+      }
+    }
+
+    // daily-cap (Phase 2): total study minutes on this day exceed the limit.
+    // Counted as real interval coverage so overlaps are never double-counted.
+    if (hasDailyCap && valid.length > 0) {
+      const total = intervalsMinutes(valid.map((v) => v.interval));
+      if (total > (dailyMaxMinutes as number)) {
+        conflicts.push({
+          type: 'daily-cap',
+          blockIds: valid.map((v) => v.b.id),
+          date,
+          severity: 'warning',
+          message: `当日学习总时长 ${total} 分钟超过上限 ${dailyMaxMinutes} 分钟`,
+        });
+      }
+    }
+
+    // minimum-break (Phase 2): consecutive (non-overlapping) sessions closer
+    // than breakMinutes. Overlapping pairs are already reported above.
+    if (hasBreak && valid.length > 1) {
+      const sorted = valid.slice().sort((x, y) => x.interval.start - y.interval.start);
+      for (let i = 1; i < sorted.length; i++) {
+        const prev = sorted[i - 1];
+        const cur = sorted[i];
+        // Only non-overlapping adjacency counts (gap >= 0).
+        if (cur.interval.start >= prev.interval.end) {
+          const gap = cur.interval.start - prev.interval.end;
+          if (gap < (breakMinutes as number)) {
+            conflicts.push({
+              type: 'minimum-break',
+              blockIds: [prev.b.id, cur.b.id],
+              date,
+              severity: 'warning',
+              message: `学习时段「${prev.b.startTime}–${prev.b.endTime}」与「${cur.b.startTime}–${cur.b.endTime}」之间休息仅 ${gap} 分钟（少于 ${breakMinutes}）`,
+              detail: { intervals: [{ start: prev.interval.end, end: cur.interval.start }] },
+            });
+          }
         }
       }
     }

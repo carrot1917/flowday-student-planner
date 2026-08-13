@@ -1,7 +1,8 @@
 import { describe, expect, it } from 'vitest';
 import scheduleRunSrc from './scheduleRun.ts?raw';
-import { buildScheduleInput, mergeScheduleBlocks } from './scheduleRun';
+import { buildScheduleInput, buildProposalInput, defaultV2SettingsFromSettings, mergeScheduleBlocks, runProposal } from './scheduleRun';
 import { generateSchedule } from './scheduler';
+import { DEFAULT_V2_SETTINGS, type SchedulerV2Settings } from './proposal';
 import type { AvailabilitySlot, ScheduleBlock, Task, Weekday, WeeklyAvailability } from '@/types';
 
 // ----------------------------------------------------------------- fixtures
@@ -157,6 +158,158 @@ describe('mergeScheduleBlocks', () => {
   });
 });
 
+// ------------------------------------------------------- Phase 2: proposal
+
+describe('buildProposalInput', () => {
+  const tasks = [mkTask('t1', { estimatedMinutes: 60, dueDate: '2026-08-20' })];
+  const availability = availAll([{ startTime: '09:00', endTime: '12:00' }]);
+  const existingBlocks: ScheduleBlock[] = [b('existing')];
+  const settings: SchedulerV2Settings = { ...DEFAULT_V2_SETTINGS, horizonDays: 7 };
+
+  it('passes the injected `from` straight through (no clock read)', () => {
+    const input = buildProposalInput({
+      tasks, availability, existingBlocks, from: '2026-08-10', generatedAt: 1000, settings,
+    });
+    expect(input.from).toBe('2026-08-10');
+  });
+
+  it('passes the injected `generatedAt` straight through', () => {
+    const input = buildProposalInput({
+      tasks, availability, existingBlocks, from: '2026-08-10', generatedAt: 9999, settings,
+    });
+    expect(input.generatedAt).toBe(9999);
+  });
+
+  it('passes ALL user-configurable settings explicitly (no hidden defaults)', () => {
+    const custom: SchedulerV2Settings = {
+      horizonDays: 30,
+      dailyStudyLimitMinutes: 300,
+      minBlockMinutes: 15,
+      maxBlockMinutes: 90,
+      breakMinutes: 10,
+      preferredPeriods: ['morning', 'evening'],
+      allowDeadlineDay: false,
+      protectManual: true,
+    };
+    const input = buildProposalInput({
+      tasks, availability, existingBlocks, from: '2026-08-10', generatedAt: 1000, settings: custom,
+    });
+    expect(input.settings).toEqual(custom);
+    // No field is silently overridden.
+    expect(input.settings.horizonDays).toBe(30);
+    expect(input.settings.dailyStudyLimitMinutes).toBe(300);
+    expect(input.settings.allowDeadlineDay).toBe(false);
+  });
+
+  it('passes excludedTaskIds and replanScope through', () => {
+    const input = buildProposalInput({
+      tasks, availability, existingBlocks, from: '2026-08-10', generatedAt: 1000, settings,
+      excludedTaskIds: ['t1'],
+      replanScope: { type: 'task', taskId: 't1' },
+    });
+    expect(input.excludedTaskIds).toEqual(['t1']);
+    expect(input.replanScope).toEqual({ type: 'task', taskId: 't1' });
+  });
+
+  it('does not mutate its inputs (references pass through)', () => {
+    const tasksRef = [mkTask('t1')];
+    const availRef = availAll([{ startTime: '09:00', endTime: '12:00' }]);
+    const blocksRef: ScheduleBlock[] = [b('e')];
+    const input = buildProposalInput({
+      tasks: tasksRef, availability: availRef, existingBlocks: blocksRef,
+      from: '2026-08-10', generatedAt: 1000, settings,
+    });
+    expect(input.tasks).toBe(tasksRef);
+    expect(input.availability).toBe(availRef);
+    expect(input.existingBlocks).toBe(blocksRef);
+  });
+});
+
+describe('runProposal', () => {
+  it('builds the input and runs the proposal in one call', () => {
+    const proposal = runProposal({
+      tasks: [mkTask('t1', { estimatedMinutes: 60, dueDate: '2026-08-20' })],
+      availability: availAll([{ startTime: '09:00', endTime: '12:00' }]),
+      existingBlocks: [],
+      from: '2026-08-10',
+      generatedAt: 1000,
+      settings: { ...DEFAULT_V2_SETTINGS },
+    });
+    expect(proposal).toBeDefined();
+    expect(proposal.runId).toMatch(/^run:/);
+    expect(proposal.from).toBe('2026-08-10');
+    expect(proposal.generatedAt).toBe(1000);
+    expect(proposal.blocks.length).toBeGreaterThan(0);
+  });
+
+  it('is deterministic: identical inputs → identical proposal', () => {
+    const args = {
+      tasks: [mkTask('t1', { estimatedMinutes: 120, dueDate: '2026-08-20' })],
+      availability: availAll([{ startTime: '09:00', endTime: '12:00' }]),
+      existingBlocks: [] as ScheduleBlock[],
+      from: '2026-08-10',
+      generatedAt: 1000,
+      settings: { ...DEFAULT_V2_SETTINGS },
+    };
+    const a = runProposal(args);
+    const b = runProposal(args);
+    expect(a).toEqual(b);
+  });
+
+  it('respects replanScope (single-task scope only places that task)', () => {
+    const proposal = runProposal({
+      tasks: [
+        mkTask('t1', { estimatedMinutes: 60, dueDate: '2026-08-20' }),
+        mkTask('t2', { estimatedMinutes: 60, dueDate: '2026-08-20', createdAt: 10 }),
+      ],
+      availability: availAll([{ startTime: '09:00', endTime: '12:00' }]),
+      existingBlocks: [],
+      from: '2026-08-10',
+      generatedAt: 1000,
+      settings: { ...DEFAULT_V2_SETTINGS },
+      replanScope: { type: 'task', taskId: 't1' },
+    });
+    expect(proposal.blocks.every((pb) => pb.block.taskId === 't1')).toBe(true);
+  });
+
+  it('does not write to existingBlocks (proposal is separate from formal schedule)', () => {
+    const existing: ScheduleBlock[] = [b('formal')];
+    const proposal = runProposal({
+      tasks: [mkTask('t1', { estimatedMinutes: 60, dueDate: '2026-08-20' })],
+      availability: availAll([{ startTime: '09:00', endTime: '12:00' }]),
+      existingBlocks: existing,
+      from: '2026-08-10',
+      generatedAt: 1000,
+      settings: { ...DEFAULT_V2_SETTINGS },
+    });
+    // Proposal blocks never share ids with the formal schedule.
+    for (const pb of proposal.blocks) {
+      expect(existing.find((b) => b.id === pb.block.id)).toBeUndefined();
+    }
+  });
+});
+
+describe('defaultV2SettingsFromSettings', () => {
+  it('derives v2 settings from Phase 1 Settings, keeping v2 defaults for the rest', () => {
+    const s = {
+      dailyStudyLimitMinutes: 300,
+      minBlockMinutes: 20,
+      maxBlockMinutes: 100,
+      breakMinutes: 10,
+    };
+    const v2 = defaultV2SettingsFromSettings(s);
+    expect(v2.dailyStudyLimitMinutes).toBe(300);
+    expect(v2.minBlockMinutes).toBe(20);
+    expect(v2.maxBlockMinutes).toBe(100);
+    expect(v2.breakMinutes).toBe(10);
+    // v2-only fields keep their defaults.
+    expect(v2.horizonDays).toBe(DEFAULT_V2_SETTINGS.horizonDays);
+    expect(v2.preferredPeriods).toEqual(DEFAULT_V2_SETTINGS.preferredPeriods);
+    expect(v2.allowDeadlineDay).toBe(DEFAULT_V2_SETTINGS.allowDeadlineDay);
+    expect(v2.protectManual).toBe(DEFAULT_V2_SETTINGS.protectManual);
+  });
+});
+
 // --------------------------------------------------------------- wiring
 
 describe('scheduleRun.ts wiring', () => {
@@ -175,5 +328,11 @@ describe('scheduleRun.ts wiring', () => {
     expect(scheduleRunSrc).toMatch(/\bDEFAULT_HORIZON_DAYS\b/);
     expect(scheduleRunSrc).toMatch(/\bDEFAULT_MIN_BLOCK_MINUTES\b/);
     expect(scheduleRunSrc).toMatch(/\bDEFAULT_MAX_BLOCK_MINUTES\b/);
+  });
+
+  it('imports the proposal module for the v2 path', () => {
+    expect(scheduleRunSrc).toContain("from '@/lib/proposal'");
+    expect(scheduleRunSrc).toMatch(/\bgenerateProposal\b/);
+    expect(scheduleRunSrc).toMatch(/\bDEFAULT_V2_SETTINGS\b/);
   });
 });

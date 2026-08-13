@@ -21,8 +21,15 @@ import {
   validateCourseName,
 } from '@/lib/domain';
 import { startReminderEngine, cancelRemindersByTask } from '@/lib/notify';
-import { mergeScheduleBlocks } from '@/lib/scheduleRun';
+import { mergeScheduleBlocks, runProposal } from '@/lib/scheduleRun';
 import { repository } from '@/lib/repository';
+import {
+  generateProposal,
+  type ReplanScope,
+  type ScheduleProposal,
+  type SchedulerV2Settings,
+} from '@/lib/proposal';
+import { applyProposal, undoTransaction, type ConfirmTransaction } from '@/lib/transaction';
 
 export type CourseResult = { ok: true; course: Course } | { ok: false; message: string };
 
@@ -45,6 +52,12 @@ interface AvailabilitySlice {
 interface SettingsSlice {
   settings: Settings;
 }
+interface ProposalSlice {
+  /** The current preview proposal — NOT persisted, NOT written to scheduleBlocks. */
+  proposal: ScheduleProposal | null;
+  /** The most recent confirm transaction (one-level undo). */
+  lastTransaction: ConfirmTransaction | null;
+}
 interface ActionsSlice {
   addTask: (partial?: Partial<Task>) => Task;
   updateTask: (id: string, patch: Partial<Task>) => void;
@@ -64,6 +77,27 @@ interface ActionsSlice {
   moveScheduleBlock: (id: string, date: string, startTime: string, endTime: string) => void;
   resizeScheduleBlock: (id: string, endTime: string) => void;
   lockScheduleBlock: (id: string, locked: boolean) => void;
+  // Phase 2: proposal workflow
+  /** Compute a proposal from current state. Does NOT touch scheduleBlocks. */
+  generateProposal: (
+    settings: SchedulerV2Settings,
+    from: string,
+    opts?: { excludedTaskIds?: string[]; replanScope?: ReplanScope },
+  ) => ScheduleProposal;
+  /** Confirm the current proposal: write blocks via a transaction (undoable). */
+  confirmProposal: () => void;
+  /** Undo the most recent proposal confirm. */
+  undoLastConfirm: () => void;
+  /** Drop the current preview without confirming. */
+  dismissProposal: () => void;
+  /** Remove a proposed block from the preview. */
+  removeProposedBlock: (id: string) => void;
+  /** Edit a proposed block's time (date/startTime/endTime). */
+  updateProposedBlock: (id: string, patch: { date?: string; startTime?: string; endTime?: string }) => void;
+  /** Toggle the user-lock on a proposed block (locked blocks survive replan). */
+  toggleProposedBlockLock: (id: string) => void;
+  /** Regenerate a single task's proposed blocks inside the current preview. */
+  regenerateTaskInProposal: (taskId: string) => void;
 }
 
 // ----------------------------------------------------------------- Contexts
@@ -73,6 +107,7 @@ const CoursesContext = createContext<CoursesSlice | null>(null);
 const ScheduleBlocksContext = createContext<ScheduleBlocksSlice | null>(null);
 const AvailabilityContext = createContext<AvailabilitySlice | null>(null);
 const SettingsContext = createContext<SettingsSlice | null>(null);
+const ProposalContext = createContext<ProposalSlice | null>(null);
 const ActionsContext = createContext<ActionsSlice | null>(null);
 
 export function FlowProvider({ children }: { children: ReactNode }) {
@@ -92,6 +127,15 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   // Reminder engine
   const stateRef = useRef(state);
   stateRef.current = state;
+
+  // Phase 2: proposal preview + undo transaction (ephemeral, never persisted).
+  const [proposal, setProposal] = useState<ScheduleProposal | null>(null);
+  const [lastTransaction, setLastTransaction] = useState<ConfirmTransaction | null>(null);
+  const proposalRef = useRef(proposal);
+  proposalRef.current = proposal;
+  const lastTransactionRef = useRef(lastTransaction);
+  lastTransactionRef.current = lastTransaction;
+
   useEffect(() => {
     return startReminderEngine(
       () => stateRef.current.tasks,
@@ -236,6 +280,105 @@ export function FlowProvider({ children }: { children: ReactNode }) {
           b.id === id ? { ...b, locked, updatedAt: now() } : b,
         ),
       })),
+    // ---- Phase 2: proposal workflow ----
+    generateProposal: (settings, from, opts) => {
+      const s = stateRef.current;
+      const p = runProposal({
+        tasks: s.tasks,
+        availability: s.availability,
+        existingBlocks: s.scheduleBlocks,
+        from,
+        generatedAt: now(),
+        settings,
+        excludedTaskIds: opts?.excludedTaskIds,
+        replanScope: opts?.replanScope,
+      });
+      setProposal(p);
+      return p;
+    },
+    confirmProposal: () => {
+      const p = proposalRef.current;
+      if (!p) return;
+      const s = stateRef.current;
+      const { blocks, transaction } = applyProposal(s.scheduleBlocks, p, now());
+      setState((prev) => ({ ...prev, scheduleBlocks: blocks }));
+      setLastTransaction(transaction);
+      setProposal(null);
+    },
+    undoLastConfirm: () => {
+      const tx = lastTransactionRef.current;
+      if (!tx) return;
+      setState((prev) => ({ ...prev, scheduleBlocks: undoTransaction(prev.scheduleBlocks, tx) }));
+      setLastTransaction(null);
+    },
+    dismissProposal: () => setProposal(null),
+    removeProposedBlock: (id) => {
+      const p = proposalRef.current;
+      if (!p) return;
+      setProposal({ ...p, blocks: p.blocks.filter((b) => b.block.id !== id) });
+    },
+    updateProposedBlock: (id, patch) => {
+      const p = proposalRef.current;
+      if (!p) return;
+      setProposal({
+        ...p,
+        blocks: p.blocks.map((pb) => {
+          if (pb.block.id !== id) return pb;
+          const next = { ...pb.block, ...patch };
+          // Recompute plannedMinutes from the (possibly new) times.
+          const st = parseHHMM(next.startTime);
+          const en = parseHHMM(next.endTime);
+          if (st !== null && en !== null && en > st) next.plannedMinutes = en - st;
+          return { ...pb, block: next };
+        }),
+      });
+    },
+    toggleProposedBlockLock: (id) => {
+      const p = proposalRef.current;
+      if (!p) return;
+      setProposal({
+        ...p,
+        blocks: p.blocks.map((pb) =>
+          pb.block.id === id ? { ...pb, lockedByUser: !pb.lockedByUser } : pb,
+        ),
+      });
+    },
+    regenerateTaskInProposal: (taskId) => {
+      const p = proposalRef.current;
+      if (!p) return;
+      const s = stateRef.current;
+      // Treat the other proposed blocks as busy so the regenerated task avoids
+      // clashing with the rest of the preview.
+      const otherProposed = p.blocks
+        .filter((pb) => pb.block.taskId !== taskId)
+        .map((pb) => ({ ...pb.block, source: 'scheduler' as const }));
+      const regen = generateProposal({
+        tasks: s.tasks,
+        availability: s.availability,
+        existingBlocks: [...s.scheduleBlocks, ...otherProposed],
+        from: p.from,
+        generatedAt: p.generatedAt,
+        settings: p.settingsSnapshot,
+        replanScope: { type: 'task', taskId },
+      });
+      setProposal({
+        ...p,
+        blocks: [
+          ...p.blocks.filter((pb) => pb.block.taskId !== taskId),
+          ...regen.blocks,
+        ].sort((a, b) =>
+          a.block.date !== b.block.date
+            ? a.block.date < b.block.date
+              ? -1
+              : 1
+            : a.block.startTime.localeCompare(b.block.startTime),
+        ),
+        unscheduled: [
+          ...p.unscheduled.filter((u) => u.taskId !== taskId),
+          ...regen.unscheduled,
+        ],
+      });
+    },
   }), []);
 
   // ---- Derived slices ----
@@ -270,15 +413,22 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     [state.settings],
   );
 
+  const proposalSlice = useMemo<ProposalSlice>(
+    () => ({ proposal, lastTransaction }),
+    [proposal, lastTransaction],
+  );
+
   return (
     <TasksContext.Provider value={tasksSlice}>
       <CoursesContext.Provider value={coursesSlice}>
         <ScheduleBlocksContext.Provider value={scheduleBlocksSlice}>
           <AvailabilityContext.Provider value={availabilitySlice}>
             <SettingsContext.Provider value={settingsSlice}>
-              <ActionsContext.Provider value={actions}>
-                {children}
-              </ActionsContext.Provider>
+              <ProposalContext.Provider value={proposalSlice}>
+                <ActionsContext.Provider value={actions}>
+                  {children}
+                </ActionsContext.Provider>
+              </ProposalContext.Provider>
             </SettingsContext.Provider>
           </AvailabilityContext.Provider>
         </ScheduleBlocksContext.Provider>
@@ -316,6 +466,12 @@ export function useAvailability(): AvailabilitySlice {
 export function useSettings(): SettingsSlice {
   const ctx = useContext(SettingsContext);
   if (!ctx) throw new Error('useSettings must be used within FlowProvider');
+  return ctx;
+}
+
+export function useProposal(): ProposalSlice {
+  const ctx = useContext(ProposalContext);
+  if (!ctx) throw new Error('useProposal must be used within FlowProvider');
   return ctx;
 }
 
