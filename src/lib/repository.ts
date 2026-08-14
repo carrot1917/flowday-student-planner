@@ -40,5 +40,19 @@ export class LocalStorageRepository implements PlannerRepository {
   }
 }
 
-// Singleton for the app
-export const repository = new LocalStorageRepository();
+// Proxy repository that can be swapped at runtime (default: localStorage)
+class ProxyRepository implements PlannerRepository {
+  private impl: PlannerRepository = new LocalStorageRepository();
+  setImpl(next: PlannerRepository) { this.impl = next; }
+  async loadSnapshot(): Promise<AppState> { return this.impl.loadSnapshot(); }
+  async saveSnapshot(state: AppState): Promise<void> { return this.impl.saveSnapshot(state); }
+  async exportBackup(): Promise<string> { return this.impl.exportBackup(); }
+  async importBackup(json: string): Promise<{ ok: true; state: AppState } | { ok: false; message: string }> { return this.impl.importBackup(json); }
+}
+
+export const repository = new ProxyRepository();
+
+export function setRepository(next: PlannerRepository) {
+  // replace the underlying implementation
+  (repository as ProxyRepository).setImpl(next);
+}

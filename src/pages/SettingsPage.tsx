@@ -23,6 +23,8 @@ export function SettingsPage() {
     }
   };
 
+  const auth = (function(){ try { const { useAuth } = require('@/lib/auth'); return useAuth(); } catch { return null; } })();
+
   return (
     <div className="animate-fade-in mx-auto max-w-2xl space-y-5">
       {/* Hero status */}
@@ -104,6 +106,47 @@ export function SettingsPage() {
       </div>
 
       {/* Phase 1: Scheduling preferences */}
+
+      {/* Sync / Privacy */}
+      <div className="rounded-[24px] border border-brand-100 bg-white/70 p-5">
+        <div className="flex items-center gap-2">
+          <Pencil className="h-5 w-5 text-brand-500" />
+          <p className="text-sm font-bold text-ink-900">同步与隐私</p>
+        </div>
+        <p className="mt-1 text-xs text-ink-400">管理你的数据同步与本地缓存策略</p>
+        <div className="mt-4">
+          {auth && auth.user ? (
+            <div className="text-sm text-ink-600">
+              已登录（{auth.user?.email}）。云端同步已启用。数据会同步以下项目：任务、课程、子任务、学习计划块、可用性规则与设置。可在登出后从本地清除缓存。
+            </div>
+          ) : (
+            <div className="text-sm text-ink-600">未登录：数据仅保存在此浏览器。</div>
+          )}
+        </div>
+        <div className="mt-4 flex gap-2">
+          <button
+            className="rounded-md border px-3 py-2 text-sm"
+            onClick={() => {
+              try {
+                const json = exportBackup((require('@/lib/repository')).repository.loadSnapshot());
+                const blob = new Blob([json], { type: 'application/json' });
+                const url = URL.createObjectURL(blob);
+                const a = document.createElement('a');
+                a.href = url; a.download = 'flowday-backup.json'; a.click(); URL.revokeObjectURL(url);
+              } catch (e) { alert('导出失败'); }
+            }}
+          >导出备份</button>
+          {auth && auth.user && (
+            <button
+              className="rounded-md border px-3 py-2 text-sm"
+              onClick={() => {
+                if (!confirm('确认登出并保留本地数据？登出后你仍可在本地访问，但云端同步将停止。')) return;
+                auth.signOut();
+              }}
+            >登出</button>
+          )}
+        </div>
+      </div>
       <div className="rounded-[24px] border border-brand-100 bg-white/70 p-5">
         <div className="flex items-center gap-2">
           <Timer className="h-5 w-5 text-brand-500" />
