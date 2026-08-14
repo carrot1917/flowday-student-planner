@@ -1,4 +1,4 @@
-﻿import type { PlannerRepository as PlannerRepoType } from './repository';
+import type { PlannerRepository as PlannerRepoType } from './repository';
 import type { AppState } from '@/types';
 import { LocalStorageRepository } from './repository';
 import type { SupabaseRepository as _SupabaseRepository } from './supabaseRepository';
@@ -11,22 +11,65 @@ export type PendingMutation = {
   createdAt: number;
 };
 
+export type SyncStatus = 'local' | 'syncing' | 'synced' | 'offline' | 'error';
+
 const PENDING_KEY = 'flowday:sync:pending_v1';
 
+/**
+ * SyncRepository wraps a local LocalStorageRepository and a (possibly null)
+ * remote SupabaseRepository. It is the single persistence entry point used
+ * by the store, so it MUST always persist locally first.
+ *
+ * Phase 3 fixes:
+ *   - Snapshot mutations are coalesced: rapid successive saves replace the
+ *     pending snapshot instead of stacking, so input/drag/resize loops do
+ *     not grow an unbounded queue.
+ *   - A debounced flush prevents bursting RPC calls on every keystroke.
+ *   - Sync status is tracked and exposed via `getStatus()` / `subscribe()`
+ *     so the UI can show local/syncing/synced/offline/error without polling.
+ *   - `setRemote(null)` (used by signOut) clears the pending queue and all
+ *     realtime subscriptions so a different account never inherits the
+ *     previous user's writes.
+ *   - Flush failures keep the queue and flip status to 'error' / 'offline'
+ *     instead of being silently dropped.
+ */
 export class SyncRepository implements PlannerRepoType {
   private local: PlannerRepoType;
   private remote: _SupabaseRepository | null;
   private queue: PendingMutation[];
   private flushing = false;
   private realtimeSubscriptions: any[] = [];
+  private flushTimer: ReturnType<typeof setTimeout> | null = null;
+  private status: SyncStatus = 'local';
+  private listeners = new Set<(s: SyncStatus) => void>();
 
   constructor(remote: _SupabaseRepository | null = null) {
     this.local = new LocalStorageRepository();
     this.remote = remote;
     this.queue = this.loadQueue();
-    if (this.remote) this.startRealtime().catch(() => {});
+    if (this.remote) {
+      this.status = this.queue.length > 0 ? 'syncing' : 'synced';
+      this.startRealtime().catch(() => {});
+      this.scheduleFlush();
+    }
   }
 
+  // ------------------------------------------------------------- status API
+  getStatus(): SyncStatus { return this.status; }
+  subscribe(fn: (s: SyncStatus) => void): () => void {
+    this.listeners.add(fn);
+    fn(this.status);
+    return () => { this.listeners.delete(fn); };
+  }
+  private setStatus(next: SyncStatus) {
+    if (this.status === next) return;
+    this.status = next;
+    for (const fn of this.listeners) {
+      try { fn(next); } catch { /* listener error must not break sync */ }
+    }
+  }
+
+  // ------------------------------------------------------------- queue store
   private loadQueue(): PendingMutation[] {
     try {
       const raw = localStorage.getItem(PENDING_KEY);
@@ -38,20 +81,49 @@ export class SyncRepository implements PlannerRepoType {
   }
 
   private saveQueue() {
-    localStorage.setItem(PENDING_KEY, JSON.stringify(this.queue));
+    try {
+      localStorage.setItem(PENDING_KEY, JSON.stringify(this.queue));
+    } catch (e) {
+      // localStorage may be unavailable (private mode / quota). The in-memory
+      // queue is still authoritative for the current session.
+    }
   }
 
+  /**
+   * Coalescing enqueue: if a pending snapshot mutation already exists,
+   * replace it in place with the new payload instead of pushing another.
+   * This is what keeps typing / drag / resize from flooding the queue.
+   */
   enqueue(m: PendingMutation) {
-    this.queue.push(m);
+    if (m.entity === 'settings' && m.payload && typeof m.payload === 'object' && 'snapshot' in m.payload) {
+      const idx = this.queue.findIndex((q) => q.entity === 'settings' && q.payload && 'snapshot' in q.payload);
+      if (idx >= 0) this.queue[idx] = m;
+      else this.queue.push(m);
+    } else {
+      this.queue.push(m);
+    }
     this.saveQueue();
-    // attempt background flush
-    this.flushQueue().catch(() => {});
+    this.setStatus(this.remote ? 'syncing' : 'local');
+    this.scheduleFlush();
+  }
+
+  /** Debounced flush — collapses a burst of saves into a single RPC attempt. */
+  private scheduleFlush() {
+    if (!this.remote) return;
+    if (this.flushTimer) clearTimeout(this.flushTimer);
+    this.flushTimer = setTimeout(() => {
+      this.flushTimer = null;
+      this.flushQueue().catch(() => { /* status already set inside */ });
+    }, 400);
   }
 
   async flushQueue(): Promise<void> {
     if (this.flushing) return;
     if (!this.remote) return;
-    if (this.queue.length === 0) return;
+    if (this.queue.length === 0) {
+      this.setStatus(navigator.onLine === false ? 'offline' : 'synced');
+      return;
+    }
     this.flushing = true;
     try {
       while (this.queue.length > 0) {
@@ -60,24 +132,44 @@ export class SyncRepository implements PlannerRepoType {
           await this.remote.client.rpc('planner_apply_mutation', { mutation: item }).throwOnError();
           this.queue.shift();
           this.saveQueue();
-        } catch (e) {
+        } catch (e: any) {
+          // Network failure / RPC error: keep the item at the head and stop.
+          // Status flips to 'offline' so the UI can show a retry indicator;
+          // the queue is persisted so a future flush (online event / next
+          // save) will retry.
+          if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+            this.setStatus('offline');
+          } else {
+            this.setStatus('error');
+            console.warn('[FlowDay] sync flush failed; keeping mutation in queue.', e);
+          }
           break;
         }
+      }
+      if (this.queue.length === 0) {
+        this.setStatus(navigator.onLine === false ? 'offline' : 'synced');
       }
     } finally {
       this.flushing = false;
     }
   }
 
-  // PlannerRepository interface
+  // ----------------------------------------------------------- PlannerRepository
   async loadSnapshot(): Promise<AppState> {
     return this.local.loadSnapshot();
   }
 
   async saveSnapshot(state: AppState): Promise<void> {
+    // Always write through local first — local-first is the contract.
     await this.local.saveSnapshot(state);
     if (this.remote) {
-      this.enqueue({ id: `snapshot:${Date.now()}`, op: 'upsert', entity: 'settings', payload: { snapshot: state }, createdAt: Date.now() });
+      this.enqueue({
+        id: `snapshot:${Date.now()}`,
+        op: 'upsert',
+        entity: 'settings',
+        payload: { snapshot: state },
+        createdAt: Date.now(),
+      });
     }
   }
 
@@ -89,13 +181,24 @@ export class SyncRepository implements PlannerRepoType {
     return this.local.importBackup(json);
   }
 
+  // ----------------------------------------------------------- remote lifecycle
   setRemote(remote: _SupabaseRepository | null) {
     this.remote = remote;
     if (remote) {
-      this.flushQueue().catch(() => {});
+      this.setStatus(this.queue.length > 0 ? 'syncing' : 'synced');
       this.startRealtime().catch(() => {});
+      this.scheduleFlush();
     } else {
+      // Detaching remote (typically on signOut): drop everything so a future
+      // login under a different account never inherits this user's queue.
       this.stopRealtime();
+      this.queue = [];
+      this.saveQueue();
+      if (this.flushTimer) {
+        clearTimeout(this.flushTimer);
+        this.flushTimer = null;
+      }
+      this.setStatus('local');
     }
   }
 
@@ -115,14 +218,14 @@ export class SyncRepository implements PlannerRepoType {
       tables.forEach((table) => {
         try {
           const chan = this.remote!.client.channel(`public:${table}:user:${userId}`)
-            .on('postgres_changes', { event: '*', schema: 'public', table, filter: `user_id=eq.${userId}` }, (payload: any) => { this.handleRemoteChange().catch(() => {}); })
+            .on('postgres_changes', { event: '*', schema: 'public', table, filter: `user_id=eq.${userId}` }, () => { this.handleRemoteChange().catch(() => {}); })
             .subscribe();
           this.realtimeSubscriptions.push(chan);
         } catch (e) {
-          // ignore
+          // ignore single channel failures
         }
       });
-    } catch (e) { /* ignore */ }
+    } catch (e) { /* ignore realtime setup failure */ }
   }
 
   private async handleRemoteChange() {
@@ -151,6 +254,8 @@ export class SyncRepository implements PlannerRepoType {
       merged.availability = remoteState.availability || localState.availability;
       merged.settings = { ...(localState.settings || {}), ...(remoteState.settings || {}) };
       await this.local.saveSnapshot(merged);
-    } catch (e) { /* ignore */ }
+    } catch (e) {
+      console.warn('[FlowDay] remote change merge failed; keeping local state.', e);
+    }
   }
 }

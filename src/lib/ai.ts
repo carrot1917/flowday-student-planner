@@ -2,9 +2,14 @@ import type { Task } from '@/types';
 import { createSubtask } from './storage';
 import { fromISO, diffDays, todayISO, safeFromISO, toISO, addDays } from './date';
 
-// Rule-based "AI" helpers. They run entirely in the browser so the app
-// works offline with no API key. The shapes are designed to be swapped
-// for a real LLM call later without changing the UI.
+// Rule-based "intelligent" helpers (NOT a real LLM). They run entirely in
+// the browser so the app works offline with no API key. The function
+// shapes are designed to be swapped for a real LLM call later without
+// changing the UI. The UI labels say "智能" rather than "AI" to avoid
+// implying a real model is involved.
+//
+// If a real LLM is integrated later, the API key MUST live server-side
+// (Vercel Function / Supabase Edge Function) — never in VITE_* env vars.
 
 interface DecomposeRule {
   match: RegExp;

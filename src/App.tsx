@@ -2,8 +2,9 @@ import { lazy, Suspense, useState, useEffect, useCallback } from 'react';
 import { Sidebar } from '@/components/Sidebar';
 import { TopBar } from '@/components/TopBar';
 import { TaskModal } from '@/components/TaskModal';
+import { MigrationModal } from '@/components/MigrationModal';
 import { FlowProvider, useActions } from '@/store';
-import { AuthProvider } from '@/lib/auth';
+import { AuthProvider, useAuth } from '@/lib/auth';
 import type { PageId } from '@/nav';
 import type { Task } from '@/types';
 import { createSubtask } from '@/lib/storage';
@@ -65,6 +66,7 @@ function Router() {
   const [modalOpen, setModalOpen] = useState(false);
   const [defaultDate, setDefaultDate] = useState<string | undefined>(undefined);
   const { updateTask } = useActions();
+  const auth = useAuth();
 
   // Listen for hash changes
   useEffect(() => {
@@ -125,8 +127,6 @@ function Router() {
     }
   };
 
-  const auth = (function(){ try { const { useAuth } = require('@/lib/auth'); return useAuth(); } catch { return null; } })();
-
   return (
     <div className="flex h-screen overflow-hidden bg-gradient-to-br from-brand-50 via-white to-brand-100/40">
       <Sidebar page={page} onNavigate={navigate} open={sidebarOpen} onClose={() => setSidebarOpen(false)} />
@@ -140,7 +140,7 @@ function Router() {
       </div>
       {modalOpen && <TaskModal task={modalTask} defaultDate={defaultDate} onClose={() => setModalOpen(false)} />}
       {/* Migration modal shown when AuthProvider detected local canonical v3 data during login */}
-      {auth?.migration ? < (require('@/components/MigrationModal')).MigrationModal /> : null}
+      {auth?.migration ? <MigrationModal /> : null}
     </div>
   );
 }

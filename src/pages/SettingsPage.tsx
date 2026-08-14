@@ -1,11 +1,13 @@
 import { Bell, BellOff, Clock, Check, GraduationCap, Pencil, Plus, Trash2, X, CircleAlert, Download, Upload, Timer, Sun, Moon } from 'lucide-react';
 import { useSettings, useCourses, useTasks, useScheduleBlocks, useAvailability, useActions } from '@/store';
+import { useAuth } from '@/lib/auth';
 import { notificationsSupported, requestPermission } from '@/lib/notify';
 import { minutesToHHMM } from '@/lib/date';
 import { suggestCourseColor } from '@/lib/domain';
 import { COURSE_PALETTE, UNCATEGORIZED_LABEL } from '@/types';
 import { useMemo, useRef, useState } from 'react';
 import { exportBackup, validateBackup, saveState } from '@/lib/storage';
+import { repository } from '@/lib/repository';
 
 export function SettingsPage() {
   const { settings } = useSettings();
@@ -23,7 +25,7 @@ export function SettingsPage() {
     }
   };
 
-  const auth = (function(){ try { const { useAuth } = require('@/lib/auth'); return useAuth(); } catch { return null; } })();
+  const auth = useAuth();
 
   return (
     <div className="animate-fade-in mx-auto max-w-2xl space-y-5">
@@ -126,9 +128,10 @@ export function SettingsPage() {
         <div className="mt-4 flex gap-2">
           <button
             className="rounded-md border px-3 py-2 text-sm"
-            onClick={() => {
+            onClick={async () => {
               try {
-                const json = exportBackup((require('@/lib/repository')).repository.loadSnapshot());
+                const state = await repository.loadSnapshot();
+                const json = exportBackup(state);
                 const blob = new Blob([json], { type: 'application/json' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');

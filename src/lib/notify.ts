@@ -130,6 +130,10 @@ export function startReminderEngine(
 
   const interval = setInterval(() => {
     const settings = getSettings();
+    // Guard against browsers without the Notification API (and against
+    // settings.notificationsEnabled being true on such a browser). Reading
+    // `Notification.permission` when the API is missing throws.
+    if (!notificationsSupported()) return;
     if (!settings.notificationsEnabled || Notification.permission !== 'granted') return;
     const tasks = getTasks();
     const today = todayISO();

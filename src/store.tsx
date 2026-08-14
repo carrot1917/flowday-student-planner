@@ -9,7 +9,7 @@ import type {
   Weekday,
   WeeklyAvailability,
 } from '@/types';
-import { createPersistGate, createTask, loadState, saveState } from '@/lib/storage';
+import { createPersistGate, createTask, loadState } from '@/lib/storage';
 import {
   addCourseToState,
   courseMap,
@@ -20,7 +20,7 @@ import {
   updateCourseInState,
   validateCourseName,
 } from '@/lib/domain';
-import { startReminderEngine, cancelRemindersByTask } from '@/lib/notify';
+import { startReminderEngine, cancelRemindersByTask, cancelReminder, scheduleReminder } from '@/lib/notify';
 import { mergeScheduleBlocks, runProposal } from '@/lib/scheduleRun';
 import { repository } from '@/lib/repository';
 import {
@@ -118,9 +118,15 @@ export function FlowProvider({ children }: { children: ReactNode }) {
   const persistGate = useRef(createPersistGate(initial));
   useEffect(() => {
     if (persistGate.current(state)) {
-      saveState(state);
-      // Also notify repository
-      repository.saveSnapshot(state).catch(() => {});
+      // Repository is the single persistence entry point. The default
+      // LocalStorageRepository writes to localStorage via saveState internally;
+      // SyncRepository writes locally + enqueues a remote mutation. The store
+      // must NOT call saveState directly — that would double-write the same
+      // payload to localStorage on every state change.
+      repository.saveSnapshot(state).catch((e) => {
+        // Surface unexpected persistence errors; never silently wipe data.
+        console.warn('[FlowDay] saveSnapshot failed; data remains in memory.', e);
+      });
     }
   }, [state]);
 
@@ -226,20 +232,36 @@ export function FlowProvider({ children }: { children: ReactNode }) {
     addScheduleBlocks: (blocks) =>
       setState((s) => ({ ...s, scheduleBlocks: mergeScheduleBlocks(s.scheduleBlocks, blocks) })),
     // Phase 1: ScheduleBlock CRUD
-    addScheduleBlock: (block) =>
+    addScheduleBlock: (block) => {
+      const created: ScheduleBlock = { ...block, createdAt: now(), updatedAt: now() };
+      // Schedule reminder immediately for future blocks — do not wait for a
+      // page reload (Phase 1 requirement).
+      const task = stateRef.current.tasks.find((t) => t.id === created.taskId);
+      if (task) scheduleReminder(created, task.title);
       setState((s) => ({
         ...s,
-        scheduleBlocks: [...s.scheduleBlocks, { ...block, createdAt: now(), updatedAt: now() }],
-      })),
-    updateScheduleBlock: (id, patch) =>
+        scheduleBlocks: [...s.scheduleBlocks, created],
+      }));
+    },
+    updateScheduleBlock: (id, patch) => {
+      // Refresh reminder timer so a moved/edited future block keeps its
+      // notification aligned to the new time.
+      const existing = stateRef.current.scheduleBlocks.find((b) => b.id === id);
+      if (existing) {
+        const next = { ...existing, ...patch };
+        const task = stateRef.current.tasks.find((t) => t.id === next.taskId);
+        if (task) scheduleReminder(next, task.title);
+        else cancelReminder(id);
+      }
       setState((s) => ({
         ...s,
         scheduleBlocks: s.scheduleBlocks.map((b) =>
           b.id === id ? { ...b, ...patch, updatedAt: now() } : b,
         ),
-      })),
+      }));
+    },
     deleteScheduleBlock: (id) => {
-      cancelRemindersByTask([id]);
+      cancelReminder(id);
       setState((s) => ({
         ...s,
         scheduleBlocks: s.scheduleBlocks.filter((b) => b.id !== id),
@@ -249,6 +271,14 @@ export function FlowProvider({ children }: { children: ReactNode }) {
       const start = parseHHMM(startTime);
       const end = parseHHMM(endTime);
       const planned = end !== null && start !== null && end > start ? end - start : 0;
+      // Cancel old timer and schedule a new one for the moved time.
+      const existing = stateRef.current.scheduleBlocks.find((b) => b.id === id);
+      if (existing) {
+        const moved: ScheduleBlock = { ...existing, date, startTime, endTime, plannedMinutes: planned };
+        const task = stateRef.current.tasks.find((t) => t.id === moved.taskId);
+        if (task) scheduleReminder(moved, task.title);
+        else cancelReminder(id);
+      }
       setState((s) => ({
         ...s,
         scheduleBlocks: s.scheduleBlocks.map((b) =>
@@ -259,6 +289,16 @@ export function FlowProvider({ children }: { children: ReactNode }) {
       }));
     },
     resizeScheduleBlock: (id, endTime) => {
+      const existing = stateRef.current.scheduleBlocks.find((b) => b.id === id);
+      if (existing) {
+        const start = parseHHMM(existing.startTime);
+        const end = parseHHMM(endTime);
+        const planned = end !== null && start !== null && end > start ? end - start : existing.plannedMinutes;
+        const resized: ScheduleBlock = { ...existing, endTime, plannedMinutes: planned };
+        const task = stateRef.current.tasks.find((t) => t.id === resized.taskId);
+        if (task) scheduleReminder(resized, task.title);
+        else cancelReminder(id);
+      }
       setState((s) => {
         const block = s.scheduleBlocks.find((b) => b.id === id);
         if (!block) return s;

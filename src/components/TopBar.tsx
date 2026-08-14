@@ -11,44 +11,42 @@ interface TopBarProps {
 }
 
 function AuthButtons() {
-  try {
-    const auth = useAuth();
-    if (!auth) return null;
-    const { user, signIn, signOut, loading } = auth;
-    if (user) {
-      return (
-        <div className="flex items-center gap-2">
-          <span className="text-sm text-ink-600">{user?.email}</span>
-          <button
-            onClick={() => signOut()}
-            className="rounded-md border px-2 py-1 text-sm hover:bg-brand-50"
-            disabled={loading}
-          >登出</button>
-        </div>
-      );
-    }
+  // useAuth() must be called unconditionally at the top level — never inside
+  // try/catch. AuthButtons is only ever rendered inside <AuthProvider>, so
+  // the context is guaranteed to exist.
+  const auth = useAuth();
+  const { user, signIn, signOut, loading } = auth;
+  if (user) {
     return (
-      <div>
+      <div className="flex items-center gap-2">
+        <span className="text-sm text-ink-600">{user?.email}</span>
         <button
-          onClick={async () => {
-            const email = window.prompt('邮箱');
-            if (!email) return;
-            const password = window.prompt('密码');
-            if (!password) return;
-            try {
-              await signIn(email, password);
-            } catch (e) {
-              window.alert('登录失败');
-            }
-          }}
+          onClick={() => signOut()}
           className="rounded-md border px-2 py-1 text-sm hover:bg-brand-50"
           disabled={loading}
-        >登录</button>
+        >登出</button>
       </div>
     );
-  } catch {
-    return null;
   }
+  return (
+    <div>
+      <button
+        onClick={async () => {
+          const email = window.prompt('邮箱');
+          if (!email) return;
+          const password = window.prompt('密码');
+          if (!password) return;
+          try {
+            await signIn(email, password);
+          } catch (e) {
+            window.alert('登录失败');
+          }
+        }}
+        className="rounded-md border px-2 py-1 text-sm hover:bg-brand-50"
+        disabled={loading}
+      >登录</button>
+    </div>
+  );
 }
 
 export function TopBar({ page, onMenuClick, onAddTask }: TopBarProps) {

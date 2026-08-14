@@ -19,9 +19,9 @@ export function AIPage({ onApplySubtasks }: { onApplySubtasks: (task: Task, subs
       {/* Tabs */}
       <div className="flex flex-wrap gap-2">
         <TabBtn active={tab === 'schedule'} onClick={() => setTab('schedule')} icon={Sparkles}>智能排期</TabBtn>
-        <TabBtn active={tab === 'decompose'} onClick={() => setTab('decompose')} icon={Wand2}>AI 任务拆解</TabBtn>
-        <TabBtn active={tab === 'plan'} onClick={() => setTab('plan')} icon={CalendarClock}>AI 计划安排</TabBtn>
-        <TabBtn active={tab === 'summary'} onClick={() => setTab('summary')} icon={ClipboardList}>AI 总结</TabBtn>
+        <TabBtn active={tab === 'decompose'} onClick={() => setTab('decompose')} icon={Wand2}>智能拆解</TabBtn>
+        <TabBtn active={tab === 'plan'} onClick={() => setTab('plan')} icon={CalendarClock}>智能规划</TabBtn>
+        <TabBtn active={tab === 'summary'} onClick={() => setTab('summary')} icon={ClipboardList}>智能总结</TabBtn>
       </div>
 
       {tab === 'schedule' && <ScheduleSuggestions />}
@@ -49,16 +49,13 @@ function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, sub
   const { tasks } = useTasks();
   const [input, setInput] = useState('');
   const [steps, setSteps] = useState<string[] | null>(null);
-  const [loading, setLoading] = useState(false);
 
+  // Decomposition is a synchronous rule-based helper (see lib/ai.ts). There
+  // is no real LLM call, so no artificial delay is needed — results appear
+  // immediately and the UI never blocks.
   const run = () => {
     if (!input.trim()) return;
-    setLoading(true);
-    setSteps(null);
-    setTimeout(() => {
-      setSteps(aiDecompose(input));
-      setLoading(false);
-    }, 600);
+    setSteps(aiDecompose(input));
   };
 
   const applyToTask = (taskId: string) => {
@@ -75,7 +72,7 @@ function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, sub
           </div>
           <div>
             <p className="text-sm font-bold text-ink-900">任务拆解</p>
-            <p className="text-[11px] text-ink-400">输入一个大任务，AI 帮你拆成可执行的小步骤</p>
+            <p className="text-[11px] text-ink-400">输入一个大任务，按规则拆成可执行的小步骤（纯本地规则，无网络请求）</p>
           </div>
         </div>
         <textarea
@@ -87,10 +84,10 @@ function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, sub
         />
         <button
           onClick={run}
-          disabled={!input.trim() || loading}
+          disabled={!input.trim()}
           className="mt-3 flex w-full items-center justify-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-400 px-4 py-2.5 text-sm font-semibold text-white shadow-lg shadow-brand-300/40 transition hover:shadow-xl disabled:opacity-40"
         >
-          <Sparkles className="h-4 w-4" /> {loading ? '思考中...' : '开始拆解'}
+          <Sparkles className="h-4 w-4" /> 开始拆解
         </button>
 
         <div className="mt-4">
@@ -111,20 +108,13 @@ function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, sub
 
       <div className="rounded-[24px] border border-brand-100 bg-white/80 p-5">
         <p className="mb-3 text-sm font-bold text-ink-900">拆解结果</p>
-        {loading && (
-          <div className="space-y-2">
-            {[0, 1, 2, 3].map((i) => (
-              <div key={i} className="h-10 rounded-2xl shimmer" />
-            ))}
-          </div>
-        )}
-        {!loading && !steps && (
+        {!steps && (
           <div className="flex flex-col items-center py-12 text-center">
             <Lightbulb className="h-10 w-10 text-brand-200" />
             <p className="mt-3 text-xs text-ink-400">输入任务后点击「开始拆解」</p>
           </div>
         )}
-        {!loading && steps && (
+        {steps && (
           <div className="space-y-2">
             {steps.map((s, i) => (
               <div key={i} className="animate-slide-in-right flex items-center gap-3 rounded-xl border border-brand-50 bg-sand-50 px-3.5 py-2.5" style={{ animationDelay: `${i * 0.06}s` }}>
@@ -152,15 +142,11 @@ function DecomposePanel({ onApplySubtasks }: { onApplySubtasks: (task: Task, sub
 
 function PlanPanel({ tasks }: { tasks: Task[] }) {
   const [slots, setSlots] = useState<PlanSlot[] | null>(null);
-  const [loading, setLoading] = useState(false);
 
+  // Plan generation is a synchronous greedy scheduler (see lib/ai.ts).
+  // No LLM, no network — instant feedback.
   const run = () => {
-    setLoading(true);
-    setSlots(null);
-    setTimeout(() => {
-      setSlots(aiPlan(tasks, todayISO()));
-      setLoading(false);
-    }, 600);
+    setSlots(aiPlan(tasks, todayISO()));
   };
 
   const grouped = useMemo(() => {
@@ -180,28 +166,20 @@ function PlanPanel({ tasks }: { tasks: Task[] }) {
             </div>
             <div>
               <p className="text-sm font-bold text-ink-900">智能计划安排</p>
-              <p className="text-[11px] text-ink-400">根据任务数量、截止日期和优先级自动生成未来 7 天学习计划</p>
+              <p className="text-[11px] text-ink-400">根据任务数量、截止日期和优先级自动生成未来 7 天学习计划（纯本地规则，无网络请求）</p>
             </div>
           </div>
           <button
             onClick={run}
-            disabled={loading || tasks.filter((t) => t.status !== 'done').length === 0}
+            disabled={tasks.filter((t) => t.status !== 'done').length === 0}
             className="flex items-center gap-2 rounded-2xl bg-gradient-to-r from-brand-500 to-brand-400 px-4 py-2 text-sm font-semibold text-white shadow-lg shadow-brand-300/40 transition hover:shadow-xl disabled:opacity-40"
           >
-            <Sparkles className="h-4 w-4" /> {loading ? '生成中...' : '生成计划'}
+            <Sparkles className="h-4 w-4" /> 生成计划
           </button>
         </div>
       </div>
 
-      {loading && (
-        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-          {[0, 1, 2, 3, 4, 5].map((i) => (
-            <div key={i} className="h-28 rounded-[20px] shimmer" />
-          ))}
-        </div>
-      )}
-
-      {!loading && slots && (
+      {slots && (
         <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
           {grouped.map(([date, daySlots]) => (
             <div key={date} className="animate-pop-in rounded-2xl border border-brand-100 bg-white/70 p-4">
@@ -220,7 +198,7 @@ function PlanPanel({ tasks }: { tasks: Task[] }) {
         </div>
       )}
 
-      {!loading && !slots && tasks.filter((t) => t.status !== 'done').length === 0 && (
+      {!slots && tasks.filter((t) => t.status !== 'done').length === 0 && (
         <div className="rounded-2xl border border-brand-100 bg-white/70 py-12 text-center text-sm text-ink-400">
           没有待安排的任务，先去添加一些任务吧
         </div>

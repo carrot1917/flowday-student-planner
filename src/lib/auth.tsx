@@ -1,9 +1,9 @@
 import React, { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
-import { createSupabaseClient } from './supabaseClient';
+import { createSupabaseClient, isSupabaseConfigured } from './supabaseClient';
 import { SupabaseRepository } from './supabaseRepository';
 import { SyncRepository } from './syncRepository';
-import { LocalStorageRepository, setRepository } from './repository';
+import { LocalStorageRepository, setRepository, repository } from './repository';
 
 type AuthState = {
   user: any | null;
@@ -42,6 +42,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     let mounted = true;
     (async () => {
+      // If Supabase env vars are not configured, stay in local-only mode.
+      // The app must still boot successfully so Vercel deployments without
+      // Supabase config show the local-only UI instead of a white screen.
+      if (!isSupabaseConfigured()) {
+        if (mounted) setLoading(false);
+        return;
+      }
       try {
         const client = createSupabaseClient();
         const s = await client.auth.getSession();
@@ -54,7 +61,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           await prepareMigration(client);
         }
       } catch (e) {
-        // supabase not configured — remain local-only
+        // supabase not configured / network error — remain local-only
+        console.warn('[FlowDay] Supabase session restore failed; staying in local-only mode.', e);
       } finally {
         if (mounted) setLoading(false);
       }
@@ -67,7 +75,25 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       const remoteRepo = new SupabaseRepository({ client });
       const remote = await remoteRepo.loadSnapshot();
       // local snapshot from current repository (Proxy -> LocalStorage)
-      const local = await (await import('./repository')).repository.loadSnapshot();
+      const local = await repository.loadSnapshot();
+      // Only prompt migration if there's actual local data not yet in remote.
+      // Without this guard, the modal would pop up on every login / page refresh.
+      const localCount = (local.tasks?.length || 0) + (local.courses?.length || 0) + (local.scheduleBlocks?.length || 0);
+      const remoteCount = (remote.tasks?.length || 0) + (remote.courses?.length || 0) + (remote.scheduleBlocks?.length || 0);
+      if (localCount === 0 && remoteCount === 0) {
+        // Nothing to migrate — go straight to sync mode.
+        const sync = new SyncRepository(remoteRepo);
+        setRepository(sync as any);
+        setMigration(null);
+        return;
+      }
+      if (localCount === 0) {
+        // No local data — just adopt remote as authoritative and start sync.
+        const sync = new SyncRepository(remoteRepo);
+        setRepository(sync as any);
+        setMigration(null);
+        return;
+      }
       setMigration({ local, remote });
     } catch (e: any) {
       console.error('prepareMigration failed', e);
@@ -75,6 +101,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signUp(email: string, password: string) {
+    if (!isSupabaseConfigured()) {
+      setError('Supabase 未配置，无法注册。请设置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY。');
+      throw new Error('Supabase not configured');
+    }
     setLoading(true);
     setError(null);
     try {
@@ -95,6 +125,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   }
 
   async function signIn(email: string, password: string) {
+    if (!isSupabaseConfigured()) {
+      setError('Supabase 未配置，无法登录。请设置 VITE_SUPABASE_URL / VITE_SUPABASE_ANON_KEY。');
+      throw new Error('Supabase not configured');
+    }
     setLoading(true);
     setError(null);
     try {
@@ -116,12 +150,26 @@ export function AuthProvider({ children }: { children: ReactNode }) {
 
   async function signOut() {
     setLoading(true);
-    try {
-      const client = createSupabaseClient();
-      await client.auth.signOut();
-    } catch (e) {
-      // ignore
+    // Best-effort: tell Supabase to revoke the session. If env is not
+    // configured or the network is down, we still need to fall back to
+    // local-only mode locally.
+    if (isSupabaseConfigured()) {
+      try {
+        const client = createSupabaseClient();
+        await client.auth.signOut();
+      } catch (e) {
+        // ignore — we still need to clean up locally
+      }
     }
+    // Drop any pending sync queue tied to the previous account so a future
+    // login under a different account never receives the old user's writes.
+    try {
+      const current = await repository.loadSnapshot();
+      void current; // touch to ensure the proxy is reachable
+    } catch { /* ignore */ }
+    try {
+      localStorage.removeItem('flowday:sync:pending_v1');
+    } catch { /* ignore */ }
     // revert repository to local-only
     setRepository(new LocalStorageRepository());
     setUser(null);
@@ -136,7 +184,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const client = createSupabaseClient();
       const remoteRepo = new SupabaseRepository({ client });
-      const local = await (await import('./repository')).repository.loadSnapshot();
+      const local = await repository.loadSnapshot();
       const userId = (await client.auth.getSession())?.data?.session?.user?.id;
       if (!userId) throw new Error('no authenticated user');
 
@@ -210,7 +258,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     try {
       const client = createSupabaseClient();
       const remoteRepo = new SupabaseRepository({ client });
-      const local = await (await import('./repository')).repository.loadSnapshot();
+      const local = await repository.loadSnapshot();
       const remote = await remoteRepo.loadSnapshot();
       // Simple merge: naive union by id for courses/tasks/scheduleBlocks. Prefer latest updatedAt when conflicts.
       // For simplicity, perform per-entity upserts using supabase client directly here.

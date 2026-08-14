@@ -24,12 +24,10 @@ export class SupabaseRepository implements PlannerRepository {
     // Attempt RPC first
     try {
       // rpc may return a json blob representing AppState
-      const res = await this.client.rpc('planner_get_snapshot');
+      const res = await this.client.rpc('planner_get_snapshot') as unknown as { data: unknown; error: unknown };
       // supabase-js returns { data, error }
-      // @ts-ignore
-      if (res && (res as any).error == null && (res as any).data) {
-        // @ts-ignore
-        return (res as any).data as AppState;
+      if (res && res.error == null && res.data) {
+        return res.data as AppState;
       }
     } catch (e) {
       // ignore and fallback
@@ -156,7 +154,7 @@ export class SupabaseRepository implements PlannerRepository {
       timezone: settingsRow.timezone || Intl.DateTimeFormat().resolvedOptions().timeZone || 'UTC',
       dailyStudyLimitMinutes: settingsRow.daily_study_limit_minutes || 180,
       minBlockMinutes: settingsRow.min_block_minutes || 25,
-      maxBlockMinutes: settings_row?.max_block_minutes || settingsRow?.max_block_minutes || 120,
+      maxBlockMinutes: settingsRow?.max_block_minutes || 120,
       breakMinutes: settingsRow.break_minutes || 10,
     } : {
       notificationsEnabled: false,
